@@ -206,7 +206,7 @@ class FlexibleBiomassPkg(BaseFBAPkg):
                         self.model.add_reactions(
                             [self.new_reactions[met_class + "_flex"]]
                         )
-                    super().build_constraint(
+                    self.build_constraint(
                         self.new_reactions[met_class + "_flex"], "flxcls"
                     )
         if self.parameters["add_total_biomass_constraint"]:
