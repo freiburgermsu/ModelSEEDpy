@@ -172,6 +172,15 @@ class FBAHelper:
             if comp[0:1] != "e":  return comp
             elif comp[0:1] == "e":  extracellular = comp
         return extracellular
+    
+    @staticmethod
+    def clean_fluxes(sol_fluxes, tol=1e-8):
+        if isinstance(sol_fluxes, dict):
+            cleaned_fluxes = {key: flux for key, flux in sol_fluxes.items() if abs(flux) >= tol}
+        else:
+            cleaned_fluxes = sol_fluxes.copy()
+            cleaned_fluxes[abs(cleaned_fluxes) < tol] = 0
+        return cleaned_fluxes
 
     @staticmethod
     def remove_compartment(objID):
