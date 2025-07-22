@@ -63,6 +63,14 @@ def minimizeFlux_withGrowth(model_util, min_growth, obj, pfba=False):
     # print(model_util.model.objective)
     # print([(cons.lb, cons.expression) for cons in model_util.model.constraints if "min" in cons.name])
     sol = model_util.model.optimize()
+    exchange = "EX_cpd00082_e0"
+    for var in model_util.model.variables:
+        if exchange in var.name:
+            print(var.name, var.primal)
+    # forward_flux = model_util.model.solver.variables[f'R_{exchange}_f'].primal
+    # reverse_flux = model_util.model.solver.variables[f'R_{exchange}_r'].primal
+    # print(f"forward flux {forward_flux} and reverse flux {reverse_flux} for {exchange}")
+
     # if pfba:
     #     model_util.add_minimal_objective_cons(sol.objective_value, name="min_exchanges")
     #     model_util.add_objective(sum(model_util.reactions_variables()), "min")
@@ -84,9 +92,13 @@ class MSMinimalMedia:
             exVar = model_util.model.problem.Variable(f"{rxn.id}_bin", lb=0, ub=1, type="binary")
             model_util.add_cons_vars(exVar)
             model_util.create_constraint(model_util.model.problem.Constraint(Zero, ub=0, name=f"{rxn.id}_M"),
-                                         coef={rxn.reverse_variable: 1, exVar: -M})
+                                         coef={rxn.reverse_variable: 1,
+                                               #rxn.forward_variable: -1,
+                                               exVar: -M})
             model_util.create_constraint(model_util.model.problem.Constraint(Zero, ub=0, name=f"{rxn.id}_min"),
-                                         coef={rxn.reverse_variable: -1, exVar: minExchanges})
+                                         coef={rxn.reverse_variable: -1,
+                                            #    rxn.forward_variable: 1,
+                                               exVar: minExchanges})
             # model_util.create_constraint(model_util.model.problem.Constraint(Zero, lb=minExchanges, name=f"{rxn.id}_min"),
             #                              coef={rxn.forward_variable: -1, rxn.reverse_variable: 1})
             # for cons in model_util.model.constraints:
@@ -114,9 +126,10 @@ class MSMinimalMedia:
         minExchange = minExchange or min_growth/1000
         print(minExchange)
         media_exchanges, model_util = MSMinimalMedia._influx_objective(model_util, interacting, minExchange)
-        # for cons in model_util.model.constraints:
-        #     if "min" in cons.name and "EX_" in cons.name:
-        #         print(cons.name, cons.ub, cons.expression, cons.lb)
+        for cons in model_util.model.constraints:
+            if "min" in cons.name and "EX_" in cons.name:
+                print(cons.name, cons.ub, cons.expression, cons.lb)
+                break
         sol, sol_dict = minimizeFlux_withGrowth(model_util, min_growth, sum(media_exchanges), pfba)
         # parse the minimal media
         min_media = _exchange_solution(sol_dict)
