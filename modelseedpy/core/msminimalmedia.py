@@ -62,8 +62,6 @@ def bioFlux_check(model, sol=None, sol_dict=None, min_growth=0.1):
 def minimizeFlux_withGrowth(model_util, min_growth, obj):
     model_util.add_minimal_objective_cons(min_growth, name="min_growth")
     model_util.add_objective(obj, "min")
-    # print(model_util.model.objective)
-    # print([(cons.lb, cons.expression) for cons in model_util.model.constraints if "min" in cons.name])
     sol = model_util.model.optimize()
     # exchange = "EX_cpd00082_e0"
     # for var in model_util.model.variables:
