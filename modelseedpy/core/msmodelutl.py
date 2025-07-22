@@ -350,6 +350,7 @@ class MSModelUtil:
     def internal_list(self):
         exchanges, transports = self.exchange_list(), self.transport_list()
         return [rxn for rxn in self.model.reactions if rxn not in exchanges and rxn not in transports]
+    
 
     def transport_list(self):
         all_transports = [rxn for rxn in self.model.reactions if len(set([
@@ -358,7 +359,7 @@ class MSModelUtil:
         # TODO look for compounds that have compounds in different compartments
         # TODO PTS transporters would fail this logic
         # remove biomass reactions
-        for rxn in all_transports:
+        for rxn in all_transports:   # This needs to be more concisely
             if "cpd11416" in [met.id.split("_")[0] for met in rxn.metabolites]:  all_transports.remove(rxn)
         return all_transports
 
@@ -386,6 +387,12 @@ class MSModelUtil:
 
     def bio_rxns_list(self):
         return [rxn for rxn in self.model.reactions if re.search(r"(^bio\d+)", rxn.id)]
+    
+    def reactions_variables(self):
+        vars = []
+        for rxn in self.model.reactions:
+            vars.extend([rxn.forward_variable, rxn.reverse_variable])
+        return vars
 
     def compatibilize(self, conflicts_file_name="orig_conflicts.json", printing=False):
         from commscores import GEMCompatibility
@@ -1659,18 +1666,17 @@ class MSModelUtil:
     def costless_excreta(self, pfba=False):
         # the double optimization is intended to truly find the maximal biomass growth
         original_objective = self.model.objective
-        minObj_cons = self.model.problem.Constraint(self.model.objective.expression, lb=self.model.slim_optimize(), name="minObj")
-        self.add_cons_vars([minObj_cons])
+        minBio_cons = self.model.problem.Constraint(self.model.objective.expression, lb=self.model.slim_optimize(), name="minBio")
+        self.add_cons_vars([minBio_cons])
         if pfba:
-            self.model.problem.constraints.minObj_cons.lb = self.model.slim_optimize()
+            self.model.problem.constraints.minBio_cons.lb = self.model.slim_optimize()
             reaction_variables = ((rxn.forward_variable, rxn.reverse_variable) for rxn in self.model.reactions)
             self.model.problem.Objective(sum(chain(*reaction_variables)), direction="min")
         sol = self.model.optimize()
         # revert conditions to before the simulation
         self.model.objective = original_objective
-        self.remove_cons_vars([minObj_cons])
-        return [rxnID.replace("EX_", "").replace("_e0", "") for rxnID, flux in sol.fluxes.items()
-                if "EX_" in rxnID and flux > 0]
+        self.remove_cons_vars([minBio_cons])
+        return [rxnID.replace("EX_", "").replace("_e0", "") for rxnID, flux in sol.fluxes.items() if "EX_" in rxnID and flux > 0]
 
     @staticmethod
     def parse_id(cobra_obj):
