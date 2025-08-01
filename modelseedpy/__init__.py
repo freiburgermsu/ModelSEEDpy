@@ -47,8 +47,7 @@ from modelseedpy.core import (
     MSGapfill,
     MSEquation,
     MSModelReport,
-    AnnotationOntology,
-    OptlangHelper
+    AnnotationOntology
 )
 from modelseedpy.core.exceptions import *
 

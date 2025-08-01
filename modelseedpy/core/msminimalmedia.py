@@ -171,8 +171,8 @@ class MSMinimalMedia:
                             interacting=True, solution_limit=5, printing=True):
         """minimize the quantity of metabolites that are consumed by the model"""
         if org_model.slim_optimize() == 0:
-            raise ObjectiveError(f"The model {org_model.id} possesses an objective value of 0 in complete media, "
-                                 "which is incompatible with minimal media computations.")
+            rprint(f"The model {org_model.id} does not grow")
+            return None
         model_util = MSModelUtil(org_model, True)
         model_util.add_timeout(10)
         print("Minimal Components media")

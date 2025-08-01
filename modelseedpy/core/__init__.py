@@ -12,7 +12,6 @@ from modelseedpy.core.msatpcorrection import MSATPCorrection
 from modelseedpy.core.msgrowthphenotypes import MSGrowthPhenotypes, MSGrowthPhenotype
 from modelseedpy.core.msmodelutl import MSModelUtil
 from modelseedpy.core.msminimalmedia import MSMinimalMedia, minimizeFlux_withGrowth, bioFlux_check
-from modelseedpy.core.optlanghelper import OptlangHelper
 from modelseedpy.core.mstemplate import MSTemplateBuilder
 from modelseedpy.core.msmodelreport import MSModelReport
 from modelseedpy.core.annotationontology import AnnotationOntology

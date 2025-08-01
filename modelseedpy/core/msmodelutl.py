@@ -645,6 +645,12 @@ class MSModelUtil:
               f" were added to the model.")
         return output
 
+    def remove_constraint(self, consName):
+        for cons in self.model.constraints:
+            if consName not in cons.name:  continue
+            # if self.printing:   print(f"Removing {consName} from {self.model.id}")
+            self.model.remove_cons_vars(cons)
+
     def create_constraint(self, constraint, coef=None, sloppy=False, printing=False):
         # if printing:   print(coef)
         self.model.add_cons_vars(constraint, sloppy=sloppy)
@@ -1638,6 +1644,7 @@ class MSModelUtil:
             "cpd00009": [1, compartment],
             "cpd00067": [1, compartment],
         }
+        print(compartment)
         stoichiometry = {}
         id_hash = self.msid_hash()
         for msid, content in coefs.items():
