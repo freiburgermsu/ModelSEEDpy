@@ -60,6 +60,7 @@ def bioFlux_check(model, sol=None, sol_dict=None, min_growth=0.1):
     return sol_dict
 
 def minimizeFlux_withGrowth(model_util, min_growth, obj):
+    print("here", model_util.model.slim_optimize())
     model_util.add_minimal_objective_cons(min_growth, name="min_growth")
     model_util.add_objective(obj, "min")
     sol = model_util.model.optimize()
@@ -96,16 +97,20 @@ class MSMinimalMedia:
     def minimize_flux(org_model, min_growth=None, environment=None, interacting=True, pfba=True,
                       climit=None, o2limit=None, printing=True, minExchange=None):
         """minimize the total in-flux of exchange reactions in the model"""
+        print("start", org_model.slim_optimize())
         if org_model.slim_optimize() == 0:
             raise ObjectiveError(f"The model {org_model.id} possesses an objective value of 0 in complete media, "
                                  "which is incompatible with minimal media computations.")
         model_util = MSModelUtil(org_model, True, environment or org_model.medium, climit, o2limit)
         # define the MILP
+        print("beginning", model_util.model.slim_optimize())
         sol_growth = model_util.run_fba(None, pfba).fluxes[model_util.biomass_objective]
+        print("mid", model_util.model.slim_optimize())
         ## some models can't grow at min_growth and therefore are limited by their max_growth
         min_growth = sol_growth if min_growth is None else min(min_growth, sol_growth)
         minExchange = minExchange or min_growth/1000
         media_exchanges, model_util = MSMinimalMedia._influx_objective(model_util, interacting, minExchange)
+        print("towards end", model_util.model.slim_optimize())
         # for cons in model_util.model.constraints:
         #     if "min" in cons.name and "EX_" in cons.name:
         #         print(cons.name, cons.ub, cons.expression, cons.lb)
