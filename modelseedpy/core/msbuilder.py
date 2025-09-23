@@ -977,7 +977,7 @@ class MSBuilder:
             add_reaction_from_rast_annotation,
         )
 
-        logger.debug(f'Base Model: Reactions - {len(model_base.reactions)}')
+        logger.debug(f"Base Model: Reactions - {len(model_base.reactions)}")
 
         rxn_atpm_id = None
         if add_maintenance_atp_reaction:
@@ -1007,6 +1007,8 @@ class MSBuilder:
         tests = atp_correction.build_tests()
 
         logger.debug("Gapfill Model")
+        from modelseedpy import MSGapfill
+
         gapfill = MSGapfill(
             model_base,
             default_gapfill_templates=[self.template],
@@ -1037,7 +1039,7 @@ class MSBuilder:
         for rxn_id, d in gapfill_res["new"].items():
             if rxn_id[:-1] in template.reactions:
                 gap_sol[rxn_id[:-1]] = get_reaction_constraints_from_direction(d)
-        #print(gap_sol)
+        # print(gap_sol)
         model_gapfilled = model_base.copy()
         _integrate_solution(self.template, model_gapfilled, gap_sol)
 
