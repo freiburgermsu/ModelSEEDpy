@@ -3,7 +3,6 @@ import logging
 import itertools
 import cobra
 
-from modelseedpy import MSATPCorrection
 from modelseedpy.core.exceptions import ModelSEEDError
 from modelseedpy.core.rast_client import RastClient
 from modelseedpy.core.msgenome import normalize_role
@@ -985,6 +984,7 @@ class MSBuilder:
             rxn_atpm_id = "ATPM_c0"
 
         from modelseedpy.core.msatpcorrection import load_default_medias
+        from modelseedpy import MSATPCorrection
 
         medias_test_atp = load_default_medias()
 
