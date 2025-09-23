@@ -2,6 +2,8 @@
 import logging
 import itertools
 import cobra
+
+from modelseedpy import MSATPCorrection
 from modelseedpy.core.exceptions import ModelSEEDError
 from modelseedpy.core.rast_client import RastClient
 from modelseedpy.core.msgenome import normalize_role
@@ -915,6 +917,23 @@ class MSBuilder:
 
         return reactions
 
+    @staticmethod
+    def add_atpm(model):
+        from cobra.core import Reaction
+
+        if "ATPM_c0" not in model.reactions:
+            atpm = Reaction(f"ATPM_c0", f"ATPM", "ATPM", 0, 1000)
+            atpm.add_metabolites(
+                {
+                    model.metabolites.cpd00001_c0: -1,
+                    model.metabolites.cpd00002_c0: -1,
+                    model.metabolites.cpd00008_c0: 1,
+                    model.metabolites.cpd00009_c0: 1,
+                    model.metabolites.cpd00067_c0: 1,
+                }
+            )
+            model.add_reactions([atpm])
+
     def build_biomass(self, rxn_id, cobra_model, template, biomass_compounds):
         bio_rxn = Reaction(rxn_id, "biomass", "", 0, 1000)
         metabolites = {}
@@ -936,6 +955,93 @@ class MSBuilder:
         return bio_rxn
 
     def build(
+        self,
+        model_or_id,
+        gapfill_media,
+        index="0",
+        allow_all_non_grp_reactions=False,
+        annotate_with_rast=True,
+        biomass_classic=False,
+        biomass_gc=0.5,
+        add_reaction_from_rast_annotation=True,
+        add_maintenance_atp_reaction=True,
+    ):
+
+        logger.debug("Build Base Model")
+        model_base = self.base_model(
+            model_or_id,
+            index,
+            allow_all_non_grp_reactions,
+            annotate_with_rast,
+            biomass_classic,
+            biomass_gc,
+            add_reaction_from_rast_annotation,
+        )
+
+        rxn_atpm_id = None
+        if add_maintenance_atp_reaction:
+            logger.debug("Add ATPM Reaction")
+            MSBuilder.add_atpm(model_base)
+            rxn_atpm_id = "ATPM_c0"
+
+        from modelseedpy.core.msatpcorrection import load_default_medias
+
+        medias_test_atp = load_default_medias()
+
+        logger.debug("ATP Analysis")
+        atp_correction = MSATPCorrection(
+            model_base,
+            self.template_core,
+            medias_test_atp,
+            compartment="c0",
+            atp_hydrolysis_id=rxn_atpm_id,
+            load_default_medias=False,
+        )
+
+        media_eval = atp_correction.evaluate_growth_media()
+        atp_correction.determine_growth_media()
+        atp_correction.apply_growth_media_gapfilling()
+        atp_correction.expand_model_to_genome_scale()
+        tests = atp_correction.build_tests()
+
+        logger.debug("Gapfill Model")
+        gapfill = MSGapfill(
+            model_base,
+            default_gapfill_templates=[self.template],
+            test_conditions=tests,
+            default_target="bio1",
+        )
+
+        gapfill_res = gapfill.run_gapfilling(gapfill_media)
+
+        def _integrate_solution(template, model, gap_fill_solution):
+            added_reactions = []
+            for rxn_id, (lb, ub) in gap_fill_solution.items():
+                template_reaction = template.reactions.get_by_id(rxn_id)
+                model_reaction = template_reaction.to_reaction(model)
+                model_reaction.lower_bound = lb
+                model_reaction.upper_bound = ub
+                _str = model_reaction.build_reaction_string(True)
+                # print(f'{model.id} add {model_reaction.id}: {_str}')
+                added_reactions.append(model_reaction)
+            model.add_reactions(added_reactions)
+            add_exchanges = MSBuilder.add_exchanges_to_model(model)
+
+            return added_reactions, add_exchanges
+
+        from modelseedpy.core.msmodel import get_reaction_constraints_from_direction
+
+        gap_sol = {}
+        for rxn_id, d in gapfill_res["new"].items():
+            if rxn_id[:-1] in template.reactions:
+                gap_sol[rxn_id[:-1]] = get_reaction_constraints_from_direction(d)
+        print(gap_sol)
+        model_gapfilled = model_base.copy()
+        _integrate_solution(self.template, model_gapfilled, gap_sol)
+
+        return model_gapfilled, atp_correction, tests, gap_sol
+
+    def build_base_model(
         self,
         model_or_id,
         index="0",
