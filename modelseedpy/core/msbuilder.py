@@ -491,7 +491,7 @@ class MSBuilder:
                     roles.add(role_id)
                     role_genes[role_id] = t[3]
             # print(cpx_id, complete, roles)
-            print(len(trig_roles), allow_incomplete_complexes, complete)
+            # print(len(trig_roles), allow_incomplete_complexes, complete)
             if len(trig_roles) > 0 and (allow_incomplete_complexes or complete):
                 complexes[cpx_id] = {}
                 for role_id in role_genes:
@@ -967,7 +967,7 @@ class MSBuilder:
     ):
 
         logger.debug("Build Base Model")
-        model_base = self.base_model(
+        model_base = self.build_base_model(
             model_or_id,
             index,
             allow_all_non_grp_reactions,
@@ -976,6 +976,8 @@ class MSBuilder:
             biomass_gc,
             add_reaction_from_rast_annotation,
         )
+
+        logger.debug(f'Base Model: Reactions - {len(model_base.reactions)}')
 
         rxn_atpm_id = None
         if add_maintenance_atp_reaction:
@@ -1035,7 +1037,7 @@ class MSBuilder:
         for rxn_id, d in gapfill_res["new"].items():
             if rxn_id[:-1] in template.reactions:
                 gap_sol[rxn_id[:-1]] = get_reaction_constraints_from_direction(d)
-        print(gap_sol)
+        #print(gap_sol)
         model_gapfilled = model_base.copy()
         _integrate_solution(self.template, model_gapfilled, gap_sol)
 
