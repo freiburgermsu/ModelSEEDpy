@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import logging
 import itertools
-from enum import Enum
 import cobra
 from modelseedpy.core.exceptions import ModelSEEDError
 from modelseedpy.core.rast_client import RastClient
@@ -196,13 +195,6 @@ grampos = {
 }
 
 
-class MSGenomeClass(Enum):
-    P = "Gram Positive"
-    N = "Gram Negative"
-    C = "Cyano"
-    A = "Archaea"
-
-
 def build_biomass(rxn_id, cobra_model, template, biomass_compounds, index="0"):
     bio_rxn = Reaction(rxn_id, "biomass", "", 0, 1000)
     metabolites = {}
@@ -310,6 +302,7 @@ class MSBuilder:
         self.name = name
         self.genome = genome
         self.template = template
+        self.template_core = None
         self.genome_class = None
         self.search_name_to_genes, self.search_name_to_original = _aaaa(
             genome, ontology_term
@@ -476,6 +469,37 @@ class MSBuilder:
         return complexes
 
     @staticmethod
+    def _build_reaction_complex_gpr_sets3(
+        match_complex, allow_incomplete_complexes=True
+    ):
+        complexes = {}
+        for cpx_id, cpx_roles in match_complex.items():
+            # print(cpx_id, cpx_roles)
+            complete = True
+            trig_roles = {}
+            roles = set()
+            role_genes = {}
+            for role_id, [role_name, trig, opt, feature_ids] in cpx_roles.items():
+                t = match_complex[cpx_id][role_id]
+                if trig and len(feature_ids) == 0:
+                    complete = False
+                if trig and len(feature_ids) > 0:
+                    trig_roles[role_id] = t[3]
+                # complete &= len(t[3]) > 0 or not t[1] or t[2]
+                if len(feature_ids) > 0:
+                    roles.add(role_id)
+                    role_genes[role_id] = t[3]
+            # print(cpx_id, complete, roles)
+            print(len(trig_roles), allow_incomplete_complexes, complete)
+            if len(trig_roles) > 0 and (allow_incomplete_complexes or complete):
+                complexes[cpx_id] = {}
+                for role_id in role_genes:
+                    complexes[cpx_id][role_id] = role_genes[role_id]
+                    # print(role_id, role_genes[role_id])
+            # print(complete, len(trig_roles) > 0)
+        return complexes
+
+    @staticmethod
     def _build_reaction_complex_gpr_sets(
         match_complex, allow_incomplete_complexes=True
     ):
@@ -525,7 +549,7 @@ class MSBuilder:
 
         # self.map_gene(template_reaction_complexes)
         # print(template_reaction_complexes)
-        gpr_set = self._build_reaction_complex_gpr_sets2(
+        gpr_set = self._build_reaction_complex_gpr_sets3(
             template_reaction_complexes, allow_incomplete_complexes
         )
         return gpr_set
@@ -584,35 +608,18 @@ class MSBuilder:
 
         :return: genome class
         """
+        from modelseedpy.core.mspredict import MSPredict
         from modelseedpy.helpers import get_template, get_classifier
-        from modelseedpy.core.mstemplate import MSTemplateBuilder
 
-        genome_classifier = get_classifier("knn_ACNP_RAST_filter_01_17_2023")
-        self.genome_class = genome_classifier.classify(self.genome)
+        predict = MSPredict()
+        self.genome_class = predict.predict(self.genome)
 
-        # TODO: update with enum MSGenomeClass
-        template_genome_scale_map = {
-            "A": "template_gram_neg",
-            "C": "template_gram_neg",
-            "N": "template_gram_neg",
-            "P": "template_gram_pos",
-        }
-        template_core_map = {
-            "A": "template_core",
-            "C": "template_core",
-            "N": "template_core",
-            "P": "template_core",
-        }
+        template_core, template_genome_scale = predict.auto_select_template(
+            self.genome_class
+        )
 
-        if (
-            self.genome_class in template_genome_scale_map
-            and self.genome_class in template_core_map
-        ):
-            self.template = MSTemplateBuilder.from_dict(
-                get_template(template_genome_scale_map[self.genome_class])
-            ).build()
-        elif self.template is None:
-            raise Exception(f"unable to select template for {self.genome_class}")
+        self.template = template_genome_scale
+        self.template_core = template_core
 
         return self.genome_class
 
