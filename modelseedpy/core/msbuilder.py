@@ -953,6 +953,22 @@ class MSBuilder:
         bio_rxn.annotation[SBO_ANNOTATION] = "SBO:0000629"
         return bio_rxn
 
+    @staticmethod
+    def integrate_gapfill_solution(template, model, gap_fill_solution):
+        added_reactions = []
+        for rxn_id, (lb, ub) in gap_fill_solution.items():
+            template_reaction = template.reactions.get_by_id(rxn_id)
+            model_reaction = template_reaction.to_reaction(model)
+            model_reaction.lower_bound = lb
+            model_reaction.upper_bound = ub
+            _str = model_reaction.build_reaction_string(True)
+            # print(f'{model.id} add {model_reaction.id}: {_str}')
+            added_reactions.append(model_reaction)
+        model.add_reactions(added_reactions)
+        add_exchanges = MSBuilder.add_exchanges_to_model(model)
+
+        return added_reactions, add_exchanges
+
     def build(
         self,
         model_or_id,
@@ -1018,30 +1034,15 @@ class MSBuilder:
 
         gapfill_res = gapfill.run_gapfilling(gapfill_media)
 
-        def _integrate_solution(template, model, gap_fill_solution):
-            added_reactions = []
-            for rxn_id, (lb, ub) in gap_fill_solution.items():
-                template_reaction = template.reactions.get_by_id(rxn_id)
-                model_reaction = template_reaction.to_reaction(model)
-                model_reaction.lower_bound = lb
-                model_reaction.upper_bound = ub
-                _str = model_reaction.build_reaction_string(True)
-                # print(f'{model.id} add {model_reaction.id}: {_str}')
-                added_reactions.append(model_reaction)
-            model.add_reactions(added_reactions)
-            add_exchanges = MSBuilder.add_exchanges_to_model(model)
-
-            return added_reactions, add_exchanges
-
         from modelseedpy.core.msmodel import get_reaction_constraints_from_direction
 
         gap_sol = {}
         for rxn_id, d in gapfill_res["new"].items():
-            if rxn_id[:-1] in template.reactions:
+            if rxn_id[:-1] in self.template.reactions:
                 gap_sol[rxn_id[:-1]] = get_reaction_constraints_from_direction(d)
         # print(gap_sol)
         model_gapfilled = model_base.copy()
-        _integrate_solution(self.template, model_gapfilled, gap_sol)
+        MSBuilder.integrate_gapfill_solution(self.template, model_gapfilled, gap_sol)
 
         return model_gapfilled, atp_correction, tests, gap_sol
 
