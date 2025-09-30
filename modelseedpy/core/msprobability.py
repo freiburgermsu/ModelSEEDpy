@@ -1,6 +1,6 @@
 from cobrakbase.core.kbasefba.fbamodel_from_cobra import CobraModelConverter
 # from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
-from modelseedpy.community.mscommunity import MSCommunity
+from mscommunity import MSCommunity
 from cobrakbase.core.kbasefba.fbamodel import FBAModel
 from cobra.io import write_sbml_model, read_sbml_model
 from collections import Counter
