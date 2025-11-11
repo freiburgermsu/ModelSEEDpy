@@ -583,7 +583,7 @@ class GapfillingPkg(BaseFBAPkg):
         cobra_rxn.annotation["sbo"] = "SBO:0000176"  # biochemical reaction
         cobra_rxn.annotation["seed.reaction"] = template_reaction.reference_id
 
-        return cobra_reaction
+        return cobra_rxn
 
     def set_media(self, media):
         if self.parameters["base_media"]:
