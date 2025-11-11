@@ -95,22 +95,26 @@ class MSMinimalMedia:
 
     @staticmethod
     def minimize_flux(org_model, min_growth=None, environment=None, interacting=True, pfba=True,
-                      climit=None, o2limit=None, printing=True, minExchange=None):
+                      climit=None, o2limit=None, printing=True, minExchange=None, errorOut=True):
         """minimize the total in-flux of exchange reactions in the model"""
-        print("start", org_model.slim_optimize())
+        # print("start", org_model.slim_optimize())
+        # print(errorOut)
         if org_model.slim_optimize() == 0:
-            raise ObjectiveError(f"The model {org_model.id} possesses an objective value of 0 in complete media, "
-                                 "which is incompatible with minimal media computations.")
+            if errorOut:
+                raise ObjectiveError(f"The model {org_model.id} possesses an objective value of 0 in complete media, "
+                                     "which is incompatible with minimal media computations.")
+            print(f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations.")
+            return {}, None
         model_util = MSModelUtil(org_model, True, environment or org_model.medium, climit, o2limit)
         # define the MILP
-        print("beginning", model_util.model.slim_optimize())
+        # print("beginning", model_util.model.slim_optimize())
         sol_growth = model_util.run_fba(None, pfba).fluxes[model_util.biomass_objective]
-        print("mid", model_util.model.slim_optimize())
+        # print("mid", model_util.model.slim_optimize())
         ## some models can't grow at min_growth and therefore are limited by their max_growth
         min_growth = sol_growth if min_growth is None else min(min_growth, sol_growth)
         minExchange = minExchange or min_growth/1000
         media_exchanges, model_util = MSMinimalMedia._influx_objective(model_util, interacting, minExchange)
-        print("towards end", model_util.model.slim_optimize())
+        # print("towards end", model_util.model.slim_optimize())
         # for cons in model_util.model.constraints:
         #     if "min" in cons.name and "EX_" in cons.name:
         #         print(cons.name, cons.ub, cons.expression, cons.lb)
@@ -129,9 +133,10 @@ class MSMinimalMedia:
 
     @staticmethod
     def determine_min_media(model, minimization_method="minFlux", min_growth=None, environment=None, interacting=True, pfba=True,
-                            printing=True, climit=None, o2limit=None):
+                            printing=True, climit=None, o2limit=None, errorOut=True):
+        # print("determine_min_media", errorOut)
         if minimization_method == "minFlux":
-            return MSMinimalMedia.minimize_flux(model, min_growth, environment, interacting, pfba, climit, o2limit, printing)
+            return MSMinimalMedia.minimize_flux(model, min_growth, environment, interacting, pfba, climit, o2limit, printing, None, errorOut)
         if minimization_method == "minComponents":
             return minimal_medium(model, min_growth, minimize_components=True)
             # return MSMinimalMedia.minimize_components(
