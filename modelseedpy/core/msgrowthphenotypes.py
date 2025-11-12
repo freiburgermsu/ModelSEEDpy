@@ -137,62 +137,63 @@ class MSGrowthPhenotype:
         else:
             modelutl.pkgmgr.getpkg("KBaseMediaPkg").build_package(full_media, 0, 1000)
 
-        with modelutl.model:
-            # Applying gene knockouts
-            for gene in self.gene_ko:
-                if gene in modelutl.model.genes:
-                    geneobj = modelutl.model.genes.get_by_id(gene)
-                    geneobj.knock_out()
+        # with modelutl.model:
+        mdl = modelutl.model.copy()
+        # Applying gene knockouts
+        for gene in self.gene_ko:
+            if gene in mdl.genes:
+                geneobj = mdl.genes.get_by_id(gene)
+                geneobj.knock_out()
 
-            # Optimizing model
-            if '1_objc' in modelutl.model.constraints:
-                constraint = modelutl.model.constraints['1_objc']
-                modelutl.model.remove_cons_vars([constraint])
-            solution = modelutl.model.optimize()
-            output["objective_value"] = solution.objective_value
-            if solution.objective_value != None and solution.objective_value > 0:
-                if flux_coefficients == None:
-                    solution = cobra.flux_analysis.pfba(modelutl.model)
-                else:
-                    #modelutl.printlp(lpfilename="lpfiles/gapfill.lp")
-                    modelutl.pkgmgr.getpkg("ObjConstPkg").build_package(
-                        0.1, None
-                    )
-                    coefobj = modelutl.model.problem.Objective(0, direction="min")
-                    modelutl.model.objective = coefobj
-                    obj_coef = {}
-                    for rxn in flux_coefficients:
-                        rxnid = rxn
-                        direction = "="
-                        if rxn[0:1] == ">" or rxn[0:1] == "<":
-                            direction = rxn[0:1]
-                            rxnid = rxn[1:]
-                        if rxnid in modelutl.model.reactions:
-                            rxnobj = modelutl.model.reactions.get_by_id(rxnid)
-                            if direction == ">" or direction == "=":
-                                obj_coef[rxnobj.forward_variable] = flux_coefficients[rxn]
-                            if direction == "<" or direction == "=":
-                                obj_coef[rxnobj.reverse_variable] = flux_coefficients[rxn]
-                    coefobj.set_linear_coefficients(obj_coef)
-                    solution = modelutl.model.optimize()
-                    modelutl.pkgmgr.getpkg("ObjConstPkg").clear()
-                if save_reaction_list:
-                    output["reactions"] = []
-                if save_fluxes:
-                    output["fluxes"] = solution.fluxes
-                output["gapfill_count"] = 0
-                output["reaction_count"] = 0
-                for reaction in modelutl.model.reactions:
-                    if reaction.id in solution.fluxes:
-                        flux = solution.fluxes[reaction.id]
-                        if abs(flux) > zero_threshold:
-                            output["reaction_count"] += 1
-                            if reaction.id[0:3] != "bio" and reaction.id[0:3] != "EX_" and reaction.id[0:3] != "DM_" and len(reaction.genes) == 0:
-                                output["gapfill_count"] += 1
-                            if save_reaction_list and flux > zero_threshold:
-                                output["reactions"].append(">"+reaction.id)
-                            elif save_reaction_list:
-                                output["reactions"].append("<"+reaction.id)
+        # Optimizing model
+        if '1_objc' in modelutl.model.constraints:
+            constraint = modelutl.model.constraints['1_objc']
+            modelutl.model.remove_cons_vars([constraint])
+        solution = modelutl.model.optimize()
+        output["objective_value"] = solution.objective_value
+        if solution.objective_value != None and solution.objective_value > 0:
+            if flux_coefficients == None:
+                solution = cobra.flux_analysis.pfba(modelutl.model)
+            else:
+                #modelutl.printlp(lpfilename="lpfiles/gapfill.lp")
+                modelutl.pkgmgr.getpkg("ObjConstPkg").build_package(
+                    0.1, None
+                )
+                coefobj = mdl.problem.Objective(0, direction="min")
+                mdl.objective = coefobj
+                obj_coef = {}
+                for rxn in flux_coefficients:
+                    rxnid = rxn
+                    direction = "="
+                    if rxn[0:1] == ">" or rxn[0:1] == "<":
+                        direction = rxn[0:1]
+                        rxnid = rxn[1:]
+                    if rxnid in mdl.reactions:
+                        rxnobj = mdl.reactions.get_by_id(rxnid)
+                        if direction == ">" or direction == "=":
+                            obj_coef[rxnobj.forward_variable] = flux_coefficients[rxn]
+                        if direction == "<" or direction == "=":
+                            obj_coef[rxnobj.reverse_variable] = flux_coefficients[rxn]
+                coefobj.set_linear_coefficients(obj_coef)
+                solution = mdl.optimize()
+                modelutl.pkgmgr.getpkg("ObjConstPkg").clear()
+            if save_reaction_list:
+                output["reactions"] = []
+            if save_fluxes:
+                output["fluxes"] = solution.fluxes
+            output["gapfill_count"] = 0
+            output["reaction_count"] = 0
+            for reaction in mdl.reactions:
+                if reaction.id in solution.fluxes:
+                    flux = solution.fluxes[reaction.id]
+                    if abs(flux) > zero_threshold:
+                        output["reaction_count"] += 1
+                        if reaction.id[0:3] != "bio" and reaction.id[0:3] != "EX_" and reaction.id[0:3] != "DM_" and len(reaction.genes) == 0:
+                            output["gapfill_count"] += 1
+                        if save_reaction_list and flux > zero_threshold:
+                            output["reactions"].append(">"+reaction.id)
+                        elif save_reaction_list:
+                            output["reactions"].append("<"+reaction.id)
 
         # Determining phenotype class
         if output["objective_value"] != None and output["objective_value"] >= output["baseline_objective"] * multiplier:
@@ -512,9 +513,11 @@ class MSGrowthPhenotypes:
         gapfilling_solutions = {}
         totalcount = 0
         datahash = {}
+        print(self.phenotypes)
         for pheno in self.phenotypes:
+            mdlUtil = MSModelUtil(modelutl.model, copy=True)
             result = pheno.simulate(
-                modelutl,
+                mdlUtil,
                 multiplier,
                 add_missing_exchanges,
                 save_fluxes,
