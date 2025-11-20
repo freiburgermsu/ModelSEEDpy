@@ -15,7 +15,7 @@ import logging
 import json, re
 
 logger = logging.getLogger(__name__)
-
+ic.configureOutput(includeContext=True)
 M =1000
 
 
@@ -60,7 +60,7 @@ def bioFlux_check(model, sol=None, sol_dict=None, min_growth=0.1):
     return sol_dict
 
 def minimizeFlux_withGrowth(model_util, min_growth, obj):
-    print("here", model_util.model.slim_optimize())
+    ic(model_util.model.id, "growth", model_util.model.slim_optimize())
     model_util.add_minimal_objective_cons(min_growth, name="min_growth")
     model_util.add_objective(obj, "min")
     sol = model_util.model.optimize()
@@ -100,10 +100,10 @@ class MSMinimalMedia:
         # print("start", org_model.slim_optimize())
         # print(errorOut)
         if org_model.slim_optimize() == 0:
+            mess = f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations."
             if errorOut:
-                raise ObjectiveError(f"The model {org_model.id} possesses an objective value of 0 in complete media, "
-                                     "which is incompatible with minimal media computations.")
-            print(f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations.")
+                raise ObjectiveError(mess)
+            print(mess)
             return {}, None
         model_util = MSModelUtil(org_model, True, environment or org_model.medium, climit, o2limit)
         # define the MILP
