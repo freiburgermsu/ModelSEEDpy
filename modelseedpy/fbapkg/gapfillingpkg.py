@@ -438,7 +438,7 @@ class GapfillingPkg(BaseFBAPkg):
                 msid = FBAHelper.modelseed_id_from_cobra_metabolite(cobra_met)
                 if msid in self.parameters["auto_sink"]:
                     if msid != "cpd11416" or cobra_met.compartment == "c0":
-                        new_demand.append(cobra_met.id)
+                        new_demand.append(cobra_met)
                 if compartment == "e":
                     new_exchange.append(cobra_met)
         # Adding all metabolites to model prior to adding reactions
@@ -469,13 +469,13 @@ class GapfillingPkg(BaseFBAPkg):
                     base_blacklist[template_reaction.reference_id] == ">"
                     or base_blacklist[template_reaction.reference_id] == "="
                 ):
-                    cobra_reaction.upper_bound = 0
+                    cobra_rxn.upper_bound = 0
                 if (
                     base_blacklist[template_reaction.reference_id] == "<"
                     or base_blacklist[template_reaction.reference_id] == "="
                 ):
-                    cobra_reaction.lower_bound = 0
-            new_penalties[cobra_reaction.id] = dict()
+                    cobra_rxn.lower_bound = 0
+            new_penalties[cobra_rxn.id] = dict()
             if (
                 cobra_rxn.id not in self.model.reactions
                 and cobra_rxn.id not in self.new_reactions

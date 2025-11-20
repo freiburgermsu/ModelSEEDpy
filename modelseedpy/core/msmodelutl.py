@@ -430,13 +430,14 @@ class MSModelUtil:
     #   model. This code sets the model objective based on the phenotype type and adds
     #   the appropriate exchange reactions.
     #################################################################################
-    def set_objective_from_phenotype(self,phenotype,missing_transporters=[],create_missing_compounds=False):
+    def set_objective_from_phenotype(self, phenotype, missing_transporters=[], create_missing_compounds=False):
         if phenotype.type == "growth":
             if "bio1" in self.model.reactions:
                 self.model.objective = "bio1"
             else:
                 logger.critical(phenotype.id+": growth phenotype but could not find biomass reaction!")
                 return None
+        obj = self.model.objective
         if phenotype.type == "uptake" or phenotype.type == "excretion":
             uptake = excretion = 0
             if phenotype.type == "uptake":
@@ -446,8 +447,8 @@ class MSModelUtil:
             if len(phenotype.additional_compounds) == 0:
                 logger.critical(phenotype.id+": can't set uptake or excretion objective without additional compounds specified!")
                 return None
-            first = True
-            for cpd in phenotype.additional_compounds:
+            # print(phenotype.additional_compounds)
+            for i,cpd in enumerate(phenotype.additional_compounds):
                 exid = "EX_"+cpd+"_e0"
                 if exid not in self.model.reactions:
                     exid = "EX_"+cpd+"_c0"
@@ -462,17 +463,22 @@ class MSModelUtil:
                                 return None
                         self.add_exchanges_for_metabolites(exmets,uptake=uptake,excretion=excretion)
                         missing_transporters.append(cpd)
-                if first:
+                if i == 0:
+                    # print(exid + " is the objective being defined, iteration ", i)
                     self.model.objective = exid
-                    first = False
                 else:
+                    # print(exid + " is the objective being added, iteration ", i)
                     self.model.objective += exid
             if phenotype.type == "excretion":
                 for reaction in self.model.reactions:
                     if reaction.objective_coefficient != 0:
                         reaction.objective_coefficient = -1*reaction.objective_coefficient
         self.model.objective.direction = 'max'
-        return str(self.model.objective)
+        # print("leaving function")
+        # self.model.objective = "bio1"
+        new_obj = self.model.objective
+        self.model.objective = obj
+        return str(new_obj)
 
     #################################################################################
     # Functions related to exchanges and transport reactions
@@ -576,9 +582,11 @@ class MSModelUtil:
     ):
         drains = []
         for cpd in cpds:
+            cpdID = cpd if isinstance(cpd, str) else cpd.id
+            cpdName = cpd if isinstance(cpd, str) else cpd.name
             drain_reaction = Reaction(
-                id=f"{prefix}{cpd.id}",
-                name=prefix_name + cpd.name,
+                id=f"{prefix}{cpdID}",
+                name=prefix_name + cpdName,
                 lower_bound=-1 * uptake,
                 upper_bound=excretion,
             )
