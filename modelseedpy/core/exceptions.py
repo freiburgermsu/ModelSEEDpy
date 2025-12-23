@@ -14,9 +14,9 @@ class FeasibilityError(Exception):
         super(FeasibilityError, self).__init__(message)
 
 
-class PackageError(Exception):
-    """Error in package manager"""
-    pass
+# PackageError is defined in mspackagemanager to avoid circular imports
+# Import it here for backwards compatibility
+from modelseedpy.fbapkg.mspackagemanager import PackageError
 
 class GapfillingError(Exception):
     """Error in model gapfilling"""

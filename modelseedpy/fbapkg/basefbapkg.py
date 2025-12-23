@@ -13,8 +13,6 @@ from cobra.core import (
     Reaction,
 )
 from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
-from modelseedpy.core.msmodelutl import MSModelUtil
-from modelseedpy.core.exceptions import FeasibilityError
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +29,8 @@ class BaseFBAPkg:
     """
 
     def __init__(self, model, name, variable_types={}, constraint_types={}, reaction_types={}):
+        # Deferred import to avoid circular dependency
+        from modelseedpy.core.msmodelutl import MSModelUtil
         if isinstance(model, MSModelUtil):
             self.model = model.model
             self.modelutl = model
