@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 import logging
 import itertools
-from enum import Enum
 import cobra
+
 from modelseedpy.core.exceptions import ModelSEEDError
 from modelseedpy.core.rast_client import RastClient
 from modelseedpy.core.msgenome import normalize_role
@@ -196,13 +196,6 @@ grampos = {
 }
 
 
-class MSGenomeClass(Enum):
-    P = "Gram Positive"
-    N = "Gram Negative"
-    C = "Cyano"
-    A = "Archaea"
-
-
 def build_biomass(rxn_id, cobra_model, template, biomass_compounds, index="0"):
     bio_rxn = Reaction(rxn_id, "biomass", "", 0, 1000)
     metabolites = {}
@@ -294,7 +287,13 @@ def build_gpr(cpx_gene_role):
 
 class MSBuilder:
     def __init__(
-        self, genome, template=None, name=None, ontology_term="RAST", index="0"
+        self,
+        genome,
+        template=None,
+        name=None,
+        ontology_term="RAST",
+        index="0",
+        template_core=None,
     ):
         """
 
@@ -310,6 +309,7 @@ class MSBuilder:
         self.name = name
         self.genome = genome
         self.template = template
+        self.template_core = template_core
         self.genome_class = None
         self.search_name_to_genes, self.search_name_to_original = _aaaa(
             genome, ontology_term
@@ -476,6 +476,37 @@ class MSBuilder:
         return complexes
 
     @staticmethod
+    def _build_reaction_complex_gpr_sets3(
+        match_complex, allow_incomplete_complexes=True
+    ):
+        complexes = {}
+        for cpx_id, cpx_roles in match_complex.items():
+            # print(cpx_id, cpx_roles)
+            complete = True
+            trig_roles = {}
+            roles = set()
+            role_genes = {}
+            for role_id, [role_name, trig, opt, feature_ids] in cpx_roles.items():
+                t = match_complex[cpx_id][role_id]
+                if trig and len(feature_ids) == 0:
+                    complete = False
+                if trig and len(feature_ids) > 0:
+                    trig_roles[role_id] = t[3]
+                # complete &= len(t[3]) > 0 or not t[1] or t[2]
+                if len(feature_ids) > 0:
+                    roles.add(role_id)
+                    role_genes[role_id] = t[3]
+            # print(cpx_id, complete, roles)
+            # print(len(trig_roles), allow_incomplete_complexes, complete)
+            if len(trig_roles) > 0 and (allow_incomplete_complexes or complete):
+                complexes[cpx_id] = {}
+                for role_id in role_genes:
+                    complexes[cpx_id][role_id] = role_genes[role_id]
+                    # print(role_id, role_genes[role_id])
+            # print(complete, len(trig_roles) > 0)
+        return complexes
+
+    @staticmethod
     def _build_reaction_complex_gpr_sets(
         match_complex, allow_incomplete_complexes=True
     ):
@@ -525,7 +556,7 @@ class MSBuilder:
 
         # self.map_gene(template_reaction_complexes)
         # print(template_reaction_complexes)
-        gpr_set = self._build_reaction_complex_gpr_sets2(
+        gpr_set = self._build_reaction_complex_gpr_sets3(
             template_reaction_complexes, allow_incomplete_complexes
         )
         return gpr_set
@@ -584,35 +615,18 @@ class MSBuilder:
 
         :return: genome class
         """
+        from modelseedpy.core.mspredict import MSPredict
         from modelseedpy.helpers import get_template, get_classifier
-        from modelseedpy.core.mstemplate import MSTemplateBuilder
 
-        genome_classifier = get_classifier("knn_ACNP_RAST_filter_01_17_2023")
-        self.genome_class = genome_classifier.classify(self.genome)
+        predict = MSPredict()
+        self.genome_class = predict.predict(self.genome)
 
-        # TODO: update with enum MSGenomeClass
-        template_genome_scale_map = {
-            "A": "template_gram_neg",
-            "C": "template_gram_neg",
-            "N": "template_gram_neg",
-            "P": "template_gram_pos",
-        }
-        template_core_map = {
-            "A": "template_core",
-            "C": "template_core",
-            "N": "template_core",
-            "P": "template_core",
-        }
+        template_core, template_genome_scale = predict.auto_select_template(
+            self.genome_class
+        )
 
-        if (
-            self.genome_class in template_genome_scale_map
-            and self.genome_class in template_core_map
-        ):
-            self.template = MSTemplateBuilder.from_dict(
-                get_template(template_genome_scale_map[self.genome_class])
-            ).build()
-        elif self.template is None:
-            raise Exception(f"unable to select template for {self.genome_class}")
+        self.template = template_genome_scale
+        self.template_core = template_core
 
         return self.genome_class
 
@@ -908,6 +922,23 @@ class MSBuilder:
 
         return reactions
 
+    @staticmethod
+    def add_atpm(model):
+        from cobra.core import Reaction
+
+        if "ATPM_c0" not in model.reactions:
+            atpm = Reaction(f"ATPM_c0", f"ATPM", "ATPM", 0, 1000)
+            atpm.add_metabolites(
+                {
+                    model.metabolites.cpd00001_c0: -1,
+                    model.metabolites.cpd00002_c0: -1,
+                    model.metabolites.cpd00008_c0: 1,
+                    model.metabolites.cpd00009_c0: 1,
+                    model.metabolites.cpd00067_c0: 1,
+                }
+            )
+            model.add_reactions([atpm])
+
     def build_biomass(self, rxn_id, cobra_model, template, biomass_compounds):
         bio_rxn = Reaction(rxn_id, "biomass", "", 0, 1000)
         metabolites = {}
@@ -928,7 +959,100 @@ class MSBuilder:
         bio_rxn.annotation[SBO_ANNOTATION] = "SBO:0000629"
         return bio_rxn
 
+    @staticmethod
+    def integrate_gapfill_solution(template, model, gap_fill_solution):
+        added_reactions = []
+        for rxn_id, (lb, ub) in gap_fill_solution.items():
+            template_reaction = template.reactions.get_by_id(rxn_id)
+            model_reaction = template_reaction.to_reaction(model)
+            model_reaction.lower_bound = lb
+            model_reaction.upper_bound = ub
+            _str = model_reaction.build_reaction_string(True)
+            # print(f'{model.id} add {model_reaction.id}: {_str}')
+            added_reactions.append(model_reaction)
+        model.add_reactions(added_reactions)
+        add_exchanges = MSBuilder.add_exchanges_to_model(model)
+
+        return added_reactions, add_exchanges
+
     def build(
+        self,
+        model_or_id,
+        gapfill_media,
+        index="0",
+        allow_all_non_grp_reactions=False,
+        annotate_with_rast=True,
+        biomass_classic=False,
+        biomass_gc=0.5,
+        add_reaction_from_rast_annotation=True,
+        add_maintenance_atp_reaction=True,
+    ):
+
+        logger.debug("Build Base Model")
+        model_base = self.build_base_model(
+            model_or_id,
+            index,
+            allow_all_non_grp_reactions,
+            annotate_with_rast,
+            biomass_classic,
+            biomass_gc,
+            add_reaction_from_rast_annotation,
+        )
+
+        logger.debug(f"Base Model: Reactions - {len(model_base.reactions)}")
+
+        rxn_atpm_id = None
+        if add_maintenance_atp_reaction:
+            logger.debug("Add ATPM Reaction")
+            MSBuilder.add_atpm(model_base)
+            rxn_atpm_id = "ATPM_c0"
+
+        from modelseedpy.core.msatpcorrection import load_default_medias
+        from modelseedpy import MSATPCorrection
+
+        medias_test_atp = load_default_medias()
+
+        logger.debug("ATP Analysis")
+        atp_correction = MSATPCorrection(
+            model_base,
+            self.template_core,
+            medias_test_atp,
+            compartment="c0",
+            atp_hydrolysis_id=rxn_atpm_id,
+            load_default_medias=False,
+        )
+
+        media_eval = atp_correction.evaluate_growth_media()
+        atp_correction.determine_growth_media()
+        atp_correction.apply_growth_media_gapfilling()
+        atp_correction.expand_model_to_genome_scale()
+        tests = atp_correction.build_tests()
+
+        logger.debug("Gapfill Model")
+        from modelseedpy import MSGapfill
+
+        gapfill = MSGapfill(
+            model_base,
+            default_gapfill_templates=[self.template],
+            test_conditions=tests,
+            default_target="bio1",
+        )
+
+        gapfill_res = gapfill.run_gapfilling(gapfill_media)
+
+        from modelseedpy.core.msmodel import get_reaction_constraints_from_direction
+
+        gap_sol = {}
+        for rxn_id, d in gapfill_res["new"].items():
+            if rxn_id[:-1] in self.template.reactions:
+                gap_sol[rxn_id[:-1]] = get_reaction_constraints_from_direction(d)
+        # print(gap_sol)
+        model_gapfilled = model_base.copy()
+        MSBuilder.integrate_gapfill_solution(self.template, model_gapfilled, gap_sol)
+
+        return model_gapfilled, atp_correction, tests, gap_sol
+
+    def build_base_model(
         self,
         model_or_id,
         index="0",

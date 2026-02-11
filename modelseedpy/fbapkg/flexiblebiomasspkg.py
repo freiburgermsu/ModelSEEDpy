@@ -77,11 +77,11 @@ class FlexibleBiomassPkg(BaseFBAPkg):
         newrxns = []
         class_coef = {"rna": {}, "dna": {}, "protein": {}, "energy": {}}
         refcpd = {
-            "cpd00001": None, # Water
-            "cpd00009": None, # Orthophosphate
-            "cpd00012": None, # Pyrophosphate
-            "cpd00067": None, # Proton
-            "cpd00002": None, # ATP
+            "cpd00001": None,  # Water
+            "cpd00009": None,  # Orthophosphate
+            "cpd00012": None,  # Pyrophosphate
+            "cpd00067": None,  # Proton
+            "cpd00002": None,  # ATP
         }
         # Finding all reference compounds in the model
         msid_hash = self.modelutl.msid_hash()
@@ -94,10 +94,10 @@ class FlexibleBiomassPkg(BaseFBAPkg):
             met_class[metabolite] = None
             msid = MSModelUtil.metabolite_msid(metabolite)
             if (
-                msid != "cpd11416" # Biomass
-                and msid != "cpd11463" # Protein
-                and msid != "cpd11462" # RNA
-                and msid != "cpd11461" # DNA
+                msid != "cpd11416"  # Biomass
+                and msid != "cpd11463"  # Protein
+                and msid != "cpd11462"  # RNA
+                and msid != "cpd11461"  # DNA
                 and msid != None
             ):
                 if msid in refcpd:

@@ -14,7 +14,7 @@ from modelseedpy.helpers import config
 
 __author__ = "Christopher Henry"
 __email__ = "chenry@anl.gov"
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ from modelseedpy.core import (
 )
 from modelseedpy.core.exceptions import *
 
-from modelseedpy.community import MSCommunity, MSCompatibility, CommKineticPkg
+# from modelseedpy.community import MSCommunity, MSCompatibility, CommKineticPkg
 
 from modelseedpy.biochem import ModelSEEDBiochem
 

@@ -35,6 +35,34 @@ default_threshold_multipiers = {
 }
 
 
+def load_default_medias(default_media_path=None, default_min_obj=0.01):
+    if default_media_path is None:
+        import os.path as _path
+        import modelseedpy
+
+        current_file_path = _path.dirname(modelseedpy.__file__)
+        default_media_path = f"{current_file_path}/data/atp_medias.tsv"
+        # current_file_path = _path.dirname(_path.abspath(__file__))
+        # default_media_path = f"{current_file_path}/../data/atp_medias.tsv"
+    atp_medias = []
+    filename = default_media_path
+    medias = pd.read_csv(filename, sep="\t", index_col=0).to_dict()
+    for media_id in medias:
+        media_d = {}
+        for exchange, v in medias[media_id].items():
+            if v > 0:
+                k = exchange.split("_")[1]
+                media_d[k] = v
+        media_d["cpd00001"] = 1000
+        media_d["cpd00067"] = 1000
+        media = MSMedia.from_dict(media_d)
+        media.id = media_id
+        media.name = media_id
+        min_obj = min_gap.get(media_id, default_min_obj)
+        atp_medias.append([media, min_obj])
+    return atp_medias
+
+
 class MSATPCorrection:
 
     DEBUG = False
@@ -84,7 +112,8 @@ class MSATPCorrection:
         self.atp_medias = []
 
         if load_default_medias:
-            self.load_default_medias(default_media_path)
+            self.atp_medias = load_default_medias(default_media_path)
+            # self.load_default_medias(default_media_path)
 
         media_ids = set()
         for media_or_list in atp_medias:
@@ -139,7 +168,7 @@ class MSATPCorrection:
             get_template("template_core"), None
         ).build()
 
-    def load_default_medias(self, default_media_path=None):
+    def load_default_medias(self, default_media_path=None, min_obj=0.01):
         if default_media_path is None:
             import os.path as _path
 
@@ -158,8 +187,8 @@ class MSATPCorrection:
             media = MSMedia.from_dict(media_d)
             media.id = media_id
             media.name = media_id
-            min_obj = 0.01
-            self.atp_medias.append((media, min_gap.get(media_d, min_obj)))
+
+            self.atp_medias.append((media, min_gap.get(media_id, min_obj)))
 
     @staticmethod
     def find_reaction_in_template(model_reaction, template, compartment):

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import re
+from typing import Iterable
 from cobra.core.dictlist import DictList
 
 logger = logging.getLogger(__name__)
@@ -8,11 +9,39 @@ logger = logging.getLogger(__name__)
 DEFAULT_SPLIT = " "
 
 
-def to_fasta(features, filename, line_size=80, fn_header=None):
+class MSFeature:
+    def __init__(self, feature_id, sequence, description=None, aliases=None):
+        """
+
+        @param feature_id: identifier for the protein coding feature
+        @param sequence: protein sequence
+        @param description: description of the feature
+        """
+
+        self.id = feature_id
+        self.seq = sequence
+        self.description = description  # temporary replace with proper parsing
+        self.ontology_terms = {}
+        self.aliases = aliases
+
+    def add_ontology_term(self, ontology_term, value):
+        """
+        Add functional term to the feature
+
+        @param ontology_term: type of the ontology (e.g., RAST, EC)
+        @param value: value for the ontology (e.g., pyruvate kinase)
+        """
+        if ontology_term not in self.ontology_terms:
+            self.ontology_terms[ontology_term] = []
+        if value not in self.ontology_terms[ontology_term]:
+            self.ontology_terms[ontology_term].append(value)
+
+
+def to_fasta(features: Iterable[MSFeature], filename, line_size=80, fn_header=None):
     with open(filename, "w") as fh:
         for feature in features:
             if feature.seq:
-                h = f">{feature.id}\n"
+                h = f">{feature.id}{DEFAULT_SPLIT}{feature.description}\n"
                 if fn_header:
                     h = fn_header(feature)
                 fh.write(h)
@@ -132,34 +161,6 @@ def extract_features(faa_str, split=DEFAULT_SPLIT, h_func=None):
         features.append(active_seq)
 
     return features
-
-
-class MSFeature:
-    def __init__(self, feature_id, sequence, description=None, aliases=None):
-        """
-
-        @param feature_id: identifier for the protein coding feature
-        @param sequence: protein sequence
-        @param description: description of the feature
-        """
-
-        self.id = feature_id
-        self.seq = sequence
-        self.description = description  # temporary replace with proper parsing
-        self.ontology_terms = {}
-        self.aliases = aliases
-
-    def add_ontology_term(self, ontology_term, value):
-        """
-        Add functional term to the feature
-
-        @param ontology_term: type of the ontology (e.g., RAST, EC)
-        @param value: value for the ontology (e.g., pyruvate kinase)
-        """
-        if ontology_term not in self.ontology_terms:
-            self.ontology_terms[ontology_term] = []
-        if value not in self.ontology_terms[ontology_term]:
-            self.ontology_terms[ontology_term].append(value)
 
 
 class MSGenome:
