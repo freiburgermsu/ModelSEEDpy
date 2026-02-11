@@ -287,7 +287,7 @@ def build_gpr(cpx_gene_role):
 
 class MSBuilder:
     def __init__(
-        self, genome, template=None, name=None, ontology_term="RAST", index="0"
+        self, genome, template=None, name=None, ontology_term="RAST", index="0", template_core=None,
     ):
         """
 
@@ -303,7 +303,7 @@ class MSBuilder:
         self.name = name
         self.genome = genome
         self.template = template
-        self.template_core = None
+        self.template_core = template_core
         self.genome_class = None
         self.search_name_to_genes, self.search_name_to_original = _aaaa(
             genome, ontology_term
