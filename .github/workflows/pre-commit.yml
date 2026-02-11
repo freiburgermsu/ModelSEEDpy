@@ -26,4 +26,4 @@ jobs:
       - name: Set file mode to false
         run: |
           git config core.filemode false
-      - uses: pre-commit/action@v2.0.3
+      - uses: pre-commit/action@v3.0.1
