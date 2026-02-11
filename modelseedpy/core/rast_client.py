@@ -100,7 +100,8 @@ class RastClient:
     def annotate_protein_batch(self, protein_batch: dict):
         protein_annotations = {}
         features = [
-            {"id": _id, "protein_translation": seq} for _id, seq in protein_batch.items()
+            {"id": _id, "protein_translation": seq}
+            for _id, seq in protein_batch.items()
         ]
         params = [{"features": features}, {"stages": self.stages}]
         result = self.rpc_client.call("GenomeAnnotation.run_pipeline", params)

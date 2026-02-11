@@ -47,7 +47,7 @@ def to_fasta(features: Iterable[MSFeature], filename, line_size=80, fn_header=No
                 fh.write(h)
                 _seq = feature.seq
                 lines = [
-                    _seq[i: i + line_size] + "\n"
+                    _seq[i : i + line_size] + "\n"
                     for i in range(0, len(_seq), line_size)
                 ]
                 for line in lines:

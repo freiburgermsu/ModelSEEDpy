@@ -287,7 +287,13 @@ def build_gpr(cpx_gene_role):
 
 class MSBuilder:
     def __init__(
-        self, genome, template=None, name=None, ontology_term="RAST", index="0", template_core=None,
+        self,
+        genome,
+        template=None,
+        name=None,
+        ontology_term="RAST",
+        index="0",
+        template_core=None,
     ):
         """
 
