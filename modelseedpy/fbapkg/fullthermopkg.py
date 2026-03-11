@@ -102,13 +102,14 @@ class FullThermoPkg(BaseFBAPkg):
                 msid_hash[msid][metabolite.id] = metabolite
             
             # Build concentration variable
-            self.build_variable(metabolite, "logconc")
+            self._build_variable(metabolite, "logconc")
             # Build error variable
-            self.build_variable(metabolite, "dgerr")
+            self._build_variable(metabolite, "dgerr")
             # Build the potential constraint
-            self.build_constraint(metabolite, verbose)
+            self._build_constraint(metabolite, verbose)
 
-    def _build_variable(self,object,type):
+
+    def _build_variable(self, object, type):
         msid = FBAHelper.modelseed_id_from_cobra_metabolite(object)
         if type == "logconc" and msid != "cpd00001":        #Do not make a concentration variable for water
             lb = ln(self.parameters["default_min_conc"])
@@ -123,7 +124,7 @@ class FullThermoPkg(BaseFBAPkg):
                 ub = self.parameters["deltaG_error"][object.id]
             return BaseFBAPkg.build_variable(self,"dgerr",-1*ub,ub,"continuous",object)
     
-    def _build_constraint(self,object, verbose):
+    def _build_constraint(self, object, verbose):
         #potential(i) (KJ/mol) = deltaG(i) (KJ/mol) + R * T(K) * lnconc(i) + charge(i) * compartment_potential
         if object.id not in self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"]:
             return None
