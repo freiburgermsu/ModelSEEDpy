@@ -13,7 +13,6 @@ from modelseedpy.core.msmodel import (
 )
 from cobra.core import Gene, Metabolite, Model, Reaction, Group
 from modelseedpy.core import FBAHelper
-from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
 from modelseedpy.helpers import get_template, get_classifier
 from modelseedpy.core.mstemplate import MSTemplateBuilder
 from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
@@ -443,12 +442,12 @@ class MSBuilder:
             for role, (triggering, optional) in cpx.roles.items():
                 rn_norm = normalize_role(role.name)
                 template_reaction_complexes[cpx.id][role.id] = [
-                    sn,
+                    rn_norm,
                     triggering,
                     optional,
                     set()
-                    if sn not in self.search_name_to_genes
-                    else set(self.search_name_to_genes[sn]),
+                    if rn_norm not in self.search_name_to_genes
+                    else set(self.search_name_to_genes[rn_norm]),
                 ]
         return template_reaction_complexes
 
@@ -466,7 +465,7 @@ class MSBuilder:
                 complete &= len(complx[3]) > 0 or not complx[1] or complx[2]
                 if len(complx[3]) > 0:
                     roles.add(role_id)
-                    role_genes[role_id] = t[3]
+                    role_genes[role_id] = complx[3]
             # print(cpx_id, complete, roles)
             if len(roles) > 0 and (allow_incomplete_complexes or complete):
                 complexes[cpx_id] = {}
@@ -523,7 +522,7 @@ class MSBuilder:
                 # print(t[3])
                 if len(t[3]) > 0:
                     roles.add(role_id)
-                    role_genes[role_id] = t[3]
+                    role_genes[role_id] = complx[3]
                 # print(t)
             # it is never complete if has no genes, only needed if assuming a complex can have all
             # roles be either non triggering or optional
@@ -1242,6 +1241,8 @@ class MSBuilder:
 
     @staticmethod
     def gapfill_model(original_mdl, target_reaction, template, media):
+        # Deferred import to avoid circular dependency
+        from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
         FBAHelper.set_objective_from_target_reaction(original_mdl, target_reaction)
         model = cobra.io.json.from_json(cobra.io.json.to_json(original_mdl))  #!!! what is the benefit of this I/O processing?
         pkgmgr = MSPackageManager.get_pkg_mgr(model)

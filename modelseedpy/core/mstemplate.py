@@ -1594,5 +1594,5 @@ class MSTemplateBuilder:
         template.add_roles([NewModelTemplateRole.from_dict(x) for x in self.roles])
         template.add_complexes([NewModelTemplateComplex.from_dict(x, template) for x in self.complexes])
         template.add_reactions([MSTemplateReaction.from_dict(x, template) for x in self.reactions])
-        template.biomasses += [AttrDict(x) for x in self.biomasses]  # TODO: biomass object
+        template.biomasses += [MSTemplateBiomass.from_dict(x, template) for x in self.biomasses]  # Fixed: create proper biomass objects with template
         return template

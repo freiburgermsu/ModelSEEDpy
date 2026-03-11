@@ -714,7 +714,6 @@ class MSGapfill:
                 #elif not remove_unneeded_reactions:
                 #    cumulative_solution.append(item)
         logger.info(f"Unneeded: {str(unneeded)}")
-        logger.info(f"Cumulative: {str(cumulative_gapfilling)}")
         #Checking that the final integrated model grows
         if check_for_growth:
             self.mdlutl.pkgmgr.getpkg("KBaseMediaPkg").build_package(solution["media"])
@@ -724,6 +723,7 @@ class MSGapfill:
         self.mdlutl.add_gapfilling(solution)
         # Testing which gapfilled reactions are needed to produce each reactant in the objective function
         self.cumulative_gapfilling.extend(cumulative_solution)
+        logger.info(f"Cumulative: {str(self.cumulative_gapfilling)}")
         return current_media_target_solution
 
     def compute_reaction_weights_from_expression_data(self, omics_data, annoont):
