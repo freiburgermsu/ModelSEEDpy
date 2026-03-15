@@ -47,18 +47,37 @@ from modelseedpy.core import (
     MSGapfill,
     MSEquation,
     MSModelReport,
-    AnnotationOntology
+    AnnotationOntology,
+    MSTemplateBuilder,
 )
 from modelseedpy.core.exceptions import *
 
-# from modelseedpy.community import MSCommunity, MSCompatibility, CommKineticPkg
+#from modelseedpy.community import MSCommunity, MSCompatibility, CommKineticPkg
 
 from modelseedpy.biochem import ModelSEEDBiochem
 
 from modelseedpy.fbapkg import (
-    BaseFBAPkg, RevBinPkg, ReactionUsePkg, SimpleThermoPkg, TotalFluxPkg, BilevelPkg, CommKineticPkg,
-    KBaseMediaPkg, FluxFittingPkg, ProteomeFittingPkg, GapfillingPkg, MetaboFBAPkg, FlexibleBiomassPkg,
-    ProblemReplicationPkg, FullThermoPkg, MSPackageManager, ObjConstPkg, ChangeOptPkg, ElementUptakePkg
+    BaseFBAPkg,
+    RevBinPkg,
+    ReactionUsePkg,
+    SimpleThermoPkg,
+    TotalFluxPkg,
+    BilevelPkg,
+    KBaseMediaPkg,
+    FluxFittingPkg,
+    ProteomeFittingPkg,
+    GapfillingPkg,
+    MetaboFBAPkg,
+    FlexibleBiomassPkg,
+    ProblemReplicationPkg,
+    FullThermoPkg,
+    MSPackageManager,
+    ObjConstPkg,
+    ObjectivePkg,
+    ChangeOptPkg,
+    ElementUptakePkg,
+    ReactionActivationPkg,
+    ExpressionActivationPkg
 )
 
 from modelseedpy.multiomics import MSExpression

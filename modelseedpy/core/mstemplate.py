@@ -173,6 +173,10 @@ class MSTemplateSpecies(Metabolite):
 
         cpd_id = f"{self.id}{index}"
         compartment = f"{self.compartment}{index}"
+        if self.compound == None:
+            logger.critical(
+                f"Compound objective associated with [{cpd_id}] is missing from template"
+            )
         name = f"{self.compound.name} [{compartment}]"
         metabolite = Metabolite(cpd_id, self.formula, name, self.charge, compartment)
         metabolite.notes["modelseed_template_id"] = self.id
@@ -515,7 +519,7 @@ class MSTemplateBiomass:
         pigment: float = 0,
         carbohydrate: float = 0,
         energy: float = 0,
-        other: float = 0,
+        other: float = 0
     ):
         """
 
@@ -629,7 +633,7 @@ class MSTemplateBiomass:
             d.get("pigment", 0),
             d.get("carbohydrate", 0),
             d.get("energy", 0),
-            d.get("other", 0),
+            d.get("other", 0)
         )
         for item in d["templateBiomassComponents"]:
             biocomp = MSTemplateBiomassComponent.from_dict(item, template)
@@ -693,6 +697,8 @@ class MSTemplateBiomass:
             "rna",
             "energy",
             "other",
+            "pigment",
+            "carbohydrate"
         ]
         type_abundances = {
             "cofactor": self.cofactor,
@@ -704,6 +710,8 @@ class MSTemplateBiomass:
             "dna": self.dna,
             "rna": self.rna,
             "energy": self.energy,
+            "pigment": self.pigment,
+            "carbohydrate": self.carbohydrate,
         }
         # Creating biomass reaction object
         metabolites = {}
@@ -1472,7 +1480,16 @@ class MSTemplate:
                 associated_groups = self.get_associated_groups(reaction)
                 for group in associated_groups:
                     group.remove_members(reaction) """
-
+    
+    #*************************Curation Functions*************************
+    def auto_fix_protons(self):
+        for rxn in self.reactions:
+            mb = rxn.check_mass_balance()
+            if 'charge' in mb and mb.get('H') == mb.get('charge'):
+                print(f'auto fix charge for {rxn.id}')
+                rxn.add_metabolites({
+                    self.compcompounds.cpd00067_c: -1 * mb['charge']
+                })
 
 class MSTemplateBuilder:
     def __init__(

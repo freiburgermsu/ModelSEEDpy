@@ -209,6 +209,34 @@ def extract_features(faa_str, split=DEFAULT_SPLIT, h_func=None):
     return features
 
 
+class MSFeature:
+    def __init__(self, feature_id, sequence, description=None, aliases=[]):
+        """
+
+        @param feature_id: identifier for the protein coding feature
+        @param sequence: protein sequence
+        @param description: description of the feature
+        """
+
+        self.id = feature_id
+        self.seq = sequence
+        self.description = description  # temporary replace with proper parsing
+        self.ontology_terms = {}
+        self.aliases = aliases
+
+    def add_ontology_term(self, ontology_term, value):
+        """
+        Add functional term to the feature
+
+        @param ontology_term: type of the ontology (e.g., RAST, EC)
+        @param value: value for the ontology (e.g., pyruvate kinase)
+        """
+        if ontology_term not in self.ontology_terms:
+            self.ontology_terms[ontology_term] = []
+        if value not in self.ontology_terms[ontology_term]:
+            self.ontology_terms[ontology_term].append(value)
+
+
 class MSGenome:
     def __init__(self):
         self.features = DictList()
@@ -316,7 +344,17 @@ class MSGenome:
         return genome
 
     def alias_hash(self):
-        return {alias: gene for gene in self.features for alias in gene.aliases}
+        output = {}
+        for gene in self.features:
+            for alias in gene.aliases:
+                #Check if alias is a list
+                if isinstance(alias,list):
+                    if alias[1] not in output:
+                        output[alias[1]] = gene
+                else:
+                    if alias not in output:
+                        output[alias] = gene
+        return output
 
     def search_for_gene(self, query):
         if query in self.features:

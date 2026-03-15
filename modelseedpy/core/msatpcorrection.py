@@ -9,6 +9,9 @@ from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
 from modelseedpy.helpers import get_template
 
 logger = logging.getLogger(__name__)
+logger.setLevel(
+    logging.WARNING
+)  # When debugging - set this to INFO then change needed messages below from DEBUG to INFO
 
 min_gap = {
     "Glc.O2": 5,
@@ -136,6 +139,7 @@ class MSATPCorrection:
         for media_id in forced_media:
             for item in self.atp_medias:
                 if item[0].id == media_id:
+                    logger.debug("Forced media: %s", media_id)
                     self.forced_media.append(item[0])
                     break
 
@@ -177,18 +181,40 @@ class MSATPCorrection:
         filename = default_media_path
         medias = pd.read_csv(filename, sep="\t", index_col=0).to_dict()
         for media_id in medias:
-            media_d = {}
-            for exchange, v in medias[media_id].items():
-                if v > 0:
-                    k = exchange.split("_")[1]
-                    media_d[k] = v
-            media_d["cpd00001"] = 1000
-            media_d["cpd00067"] = 1000
-            media = MSMedia.from_dict(media_d)
-            media.id = media_id
-            media.name = media_id
-
-            self.atp_medias.append((media, min_gap.get(media_id, min_obj)))
+            if media_id not in ["name","msid"]: 
+                media_d = {}
+                for exchange, v in medias[media_id].items():
+                    if v > 0:
+                        k = exchange.split("_")[1]
+                        media_d[k] = v
+                media_d["cpd00001"] = 1000
+                media_d["cpd00067"] = 1000
+                media = MSMedia.from_dict(media_d)
+                media.id = media_id
+                media.name = media_id
+                self.atp_medias.append([media, min_gap.get(media_id, 0.01)])
+        
+        media_ids = set()
+        temp_medias = self.atp_medias
+        self.atp_medias = []
+        for media in temp_medias:
+            if isinstance(media, list):
+                if media[0].id in media_ids:
+                    raise ValueError("media ids not unique")
+                media_ids.add(media[0].id)
+                self.atp_medias.append(media)
+                self.media_hash[media[0].id] = media[0]
+            else:
+                if media.id in media_ids:
+                    raise ValueError("media ids not unique")
+                media_ids.add(media.id)
+                self.atp_medias.append([media, 0.01])
+                self.media_hash[media.id] = media
+        if "empty" not in self.media_hash:
+            media = MSMedia.from_dict({})
+            media.id = "empty"
+            media.name = "empty"
+            self.media_hash[media.id] = media
 
     @staticmethod
     def find_reaction_in_template(model_reaction, template, compartment):
@@ -390,7 +416,7 @@ class MSATPCorrection:
         if self.max_gapfilling is None:
             self.max_gapfilling = best_score
 
-        logger.info(f"max_gapfilling: {self.max_gapfilling}, best_score: {best_score}")
+        logger.debug(f"max_gapfilling: {self.max_gapfilling}, best_score: {best_score}")
 
         for media in self.media_gapfill_stats:
             if atp_att["core_atp_gapfilling"][media.id][
@@ -402,6 +428,10 @@ class MSATPCorrection:
             ):
                 self.selected_media.append(media)
                 atp_att["selected_media"][media.id] = 0
+            elif media in self.forced_media:
+                self.selected_media.append(media)
+                atp_att["selected_media"][media.id] = 0
+                
 
         self.modelutl.save_attributes(atp_att, "ATP_analysis")
 
@@ -463,7 +493,7 @@ class MSATPCorrection:
         )
         # Removing filtered reactions
         for item in self.filtered_noncore:
-            logger.info("Removing " + item[0].id + " " + item[1])
+            logger.debug("Removing " + item[0].id + " " + item[1])
             if item[1] == ">":
                 item[0].upper_bound = 0
             else:
@@ -473,6 +503,16 @@ class MSATPCorrection:
                 self.model.remove_reactions([item[0]])
         # Restoring other compartment reactions but not the core because this would undo reaction filtering
         self.restore_noncore_reactions(noncore=False, othercompartment=True)
+        # Setting core model attribute in model
+        core_reactions = []
+        for reaction in self.model.reactions:
+            # check if reaction is in core template
+            template_reaction = self.find_reaction_in_template(
+                reaction, self.coretemplate, self.compartment[0:1]
+            )
+            if template_reaction is not None:
+                core_reactions.append(reaction.id)
+        self.modelutl.save_attributes(core_reactions, "core_reactions")
 
     def restore_noncore_reactions(self, noncore=True, othercompartment=True):
         """

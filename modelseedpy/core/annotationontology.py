@@ -13,7 +13,7 @@ from modelseedpy.core.msgenome import MSGenome
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
-    logging.INFO
+    logging.WARNING
 )  # When debugging - set this to INFO then change needed messages below from DEBUG to INFO
 
 # Class structure
@@ -37,6 +37,7 @@ allowable_score_types = [
     "tmscore",
     "rmsd",
     "hmmscore",
+    "score"
 ]
 
 def convert_to_search_role(role):
@@ -60,9 +61,9 @@ class AnnotationOntologyEvidence:
         self.ref_entity = ref_entity
         self.entity_type = entity_type
         self.scores = scores
-        for item in self.scores:
-            if item not in allowable_score_types:
-                logger.warning(item + " not an allowable score type!")
+        #for item in self.scores:
+            #if item not in allowable_score_types:
+                #logger.warning(item + " not an allowable score type!")
 
     def to_data(self):
         output = {
@@ -452,4 +453,41 @@ class AnnotationOntology:
         )
         newgenome.annoont = self
         return newgenome
-        
+    
+    def get_events_from_priority_list(self,priority_list):
+        event_list = []
+        for item in priority_list:
+            selected_merge = None
+            for event in self.events:
+                if item == "all":
+                    if event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "RAST":
+                    if len(event.method) > 4 and event.method[0:4] == "RAST" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "Prokka":
+                    if len(event.method) > 6 and event.method[0:6] == "Prokka" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "DRAM":
+                    if len(event.method) > 4 and event.method[0:4] == "DRAM" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "GLM4EC":
+                    if len(event.method) > 6 and event.method[0:6] == "GLM4EC" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "PDB":
+                    if event.method == "KBAnnotationApps.PDBAnnotation" and event.ontology.id == "EC" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "SNEKMER":
+                    if len(event.method) > 7 and event.method[0:7] == "Snekmer" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "Import":
+                    if len(event.method) > 6 and event.method[0:6] == "Import" and event.id not in event_list:
+                        event_list.append(event.id)
+                elif item == "Merge":
+                    if len(event.method) > 5 and event.method[0:5] == "Merge" and event.id not in event_list:
+                        selected_merge = event.id
+                elif item.lower() in event.description.lower() or item.lower() in event.id.lower():
+                    event_list.append(event.id)
+            if selected_merge:
+                event_list.append(selected_merge)
+        return event_list

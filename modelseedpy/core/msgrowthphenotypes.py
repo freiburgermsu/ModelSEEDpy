@@ -1,16 +1,17 @@
 # -*- coding: utf-8 -*-
 import pandas as pd
 import logging
-import cobra
 from cobra.core.dictlist import DictList
 from modelseedpy.core.msmedia import MSMedia
 from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
+from modelseedpy.fbapkg.objectivepkg import ObjectiveData
 from modelseedpy.core.msmodelutl import MSModelUtil
 from modelseedpy.core.msgapfill import MSGapfill
+from modelseedpy.core.msmedia import MSMedia
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
-    logging.INFO
+    logging.WARNING
 )  # When debugging - set this to INFO then change needed messages below from DEBUG to INFO
 
 zero_threshold = 0.0000001
@@ -19,27 +20,110 @@ class MSGrowthPhenotype:
     def __init__(
         self,
         id,
-        media=None,
+        base_media=None,
         experimental_value=None,
-        gene_ko=[],
-        additional_compounds=[],
-        parent=None,
+        experimental_value_is_binary=False,
+        knockouts=[],
+        additional_compounds={},
+        primary_compounds=[],
         name=None,
-        type="growth"
+        gene_association_scores={},
+        objective=ObjectiveData.from_string("MAX{bio1}"),
+        target_element=None,
+        target_element_limit=10,
+        parent=None
     ):
         self.id = id
         self.name = name
         if name == None:
             self.name = self.id
         self.experimental_value = experimental_value
-        self.media = media
-        self.gene_ko = gene_ko
-        self.gapfilling = None
+        self.experimental_value_is_binary = experimental_value_is_binary
+        self.base_media = base_media
+        self.knockouts = knockouts
         self.additional_compounds = additional_compounds
+        self.primary_compounds = primary_compounds
+        self.target_element = target_element
+        self.gene_association_scores = gene_association_scores
+        self.objective = objective
         self.parent = parent
-        self.type = type
 
-    def build_media(self, include_base_media=True):
+    def to_dict(self, media_output_type="complete"):
+        """
+        Convert MSGrowthPhenotype to a dictionary.
+
+        Parameters:
+            media_output_type (str): Output type for media serialization.
+                Options: "minimal", "bounds", "complete" (default: "complete")
+
+        Returns:
+            dict: Dictionary representation of the phenotype
+        """
+        output = {
+            'id': self.id,
+            'name': self.name,
+            'experimental_value': self.experimental_value,
+            'experimental_value_is_binary': self.experimental_value_is_binary,
+            'knockouts': list(self.knockouts) if self.knockouts else [],
+            'additional_compounds': dict(self.additional_compounds) if self.additional_compounds else {},
+            'primary_compounds': list(self.primary_compounds) if self.primary_compounds else [],
+            'gene_association_scores': dict(self.gene_association_scores) if self.gene_association_scores else {},
+            'target_element': self.target_element,
+            'target_element_limit': getattr(self, 'target_element_limit', 10),
+            'objective': self.objective.to_string() if self.objective else None,
+        }
+
+        # Serialize base_media if present
+        if self.base_media:
+            output['base_media'] = self.base_media.to_dict(output_type=media_output_type)
+            output['base_media_id'] = self.base_media.id
+            output['base_media_name'] = self.base_media.name
+            output['base_media_ref'] = self.base_media.media_ref
+
+        return output
+
+    @staticmethod
+    def from_dict(data, parent=None):
+        """
+        Create MSGrowthPhenotype from a dictionary.
+
+        Parameters:
+            data (dict): Dictionary containing phenotype data
+            parent (MSGrowthPhenotypes, optional): Parent phenotype set
+
+        Returns:
+            MSGrowthPhenotype: A new MSGrowthPhenotype instance
+        """
+        # Reconstruct base_media if present
+        base_media = None
+        if 'base_media' in data and data['base_media']:
+            base_media = MSMedia.from_dict(data['base_media'])
+            base_media.id = data.get('base_media_id', 'media')
+            base_media.name = data.get('base_media_name', '')
+            base_media.media_ref = data.get('base_media_ref')
+
+        # Reconstruct objective
+        objective = None
+        if 'objective' in data and data['objective']:
+            objective = ObjectiveData.from_string(data['objective'])
+
+        return MSGrowthPhenotype(
+            id=data.get('id'),
+            base_media=base_media,
+            experimental_value=data.get('experimental_value'),
+            experimental_value_is_binary=data.get('experimental_value_is_binary', False),
+            knockouts=data.get('knockouts', []),
+            additional_compounds=data.get('additional_compounds', {}),
+            primary_compounds=data.get('primary_compounds', []),
+            name=data.get('name'),
+            gene_association_scores=data.get('gene_association_scores', {}),
+            objective=objective,
+            target_element=data.get('target_element'),
+            target_element_limit=data.get('target_element_limit', 10),
+            parent=parent
+        )
+
+    def build_media(self):
         """Builds media object to use when simulating the phenotype
         Parameters
         ----------
@@ -47,26 +131,77 @@ class MSGrowthPhenotype:
             Indicates whether to include the base media for the phenotype set in the formulation
         """
         cpd_hash = {}
+        if self.base_media:
+            cpd_hash = self.base_media.to_dict()       
         for cpd in self.additional_compounds:
-            cpd_hash[cpd] = 100
+            cpd_hash[cpd] = self.additional_compounds[cpd]
+        for cpd in self.primary_compounds:
+            if cpd not in cpd_hash:
+                cpd_hash[cpd] = 100 # Default flux for primary compounds
         full_media = MSMedia.from_dict(cpd_hash)
-        if self.media:
-            full_media.merge(self.media, overwrite_overlap=False)
-        if include_base_media:
-            if self.parent and self.parent.base_media:
-                full_media.merge(self.parent.base_media, overwrite_overlap=False)
+        if self.parent and self.parent.base_media:
+            print("Adding parent base media to phenotype media")
+            full_media.merge(self.parent.base_media, overwrite_overlap=False)
         return full_media
 
+    def configure_model_for_phenotype(self,model_or_mdlutl,add_missing_exchanges=True):
+        """Configures the model to run this phenotype
+        Parameters
+        ----------
+        model_or_modelutl : Model | MSModelUtl
+            Model to use to run the simulations
+        """
+        output = {"baseline_objective":0.01}
+        #Translating model is not MSModelUtil
+        modelutl = model_or_mdlutl
+        if not isinstance(model_or_mdlutl, MSModelUtil):
+            modelutl = MSModelUtil.get(model_or_mdlutl)
+        #Setting the phenotype objective
+        modelutl.pkgmgr.getpkg("ObjectivePkg").build_package(
+            objective_or_string=self.objective,
+            objective_name=self.name,
+            set_objective=True
+        )
+        # Setting media in model
+        modelutl.pkgmgr.getpkg("KBaseMediaPkg").build_package(
+            self.build_media(), self.parent.base_uptake, self.parent.base_excretion
+        )
+        # Adding transport reactions
+        if add_missing_exchanges:
+            ex_output = modelutl.add_missing_exchanges(self.build_media())
+            output["missing_transports"] = ex_output
+        # Adding elemental constraints
+        if self.target_element:
+            print("Target element: "+self.target_element)
+            #Computing baseline growth
+            reaction_exceptions = []
+            modelutl.pkgmgr.getpkg("ElementUptakePkg").build_package(
+                {self.target_element:self.target_element_limit}, exception_reactions=reaction_exceptions
+            )
+            output["baseline_objective"] = modelutl.model.slim_optimize()
+            #Resetting elemental constraints with exception reactions
+            exchange_hash = modelutl.exchange_hash()
+            for item in self.primary_compounds:
+                if item in exchange_hash:
+                    for rxn in exchange_hash[item]:
+                        if rxn not in reaction_exceptions:
+                            reaction_exceptions.append(rxn)
+            modelutl.pkgmgr.getpkg("ElementUptakePkg").clear()
+            modelutl.pkgmgr.getpkg("ElementUptakePkg").build_package(
+                {self.target_element:self.target_element_limit}, exception_reactions=reaction_exceptions
+            )
+        return output
+    
     def simulate(
         self,
         model_or_mdlutl,
-        multiplier=3,
         add_missing_exchanges=False,
-        save_fluxes=False,
-        save_reaction_list=False,
+        growth_threshold=0.01,
+        gapfilling=False,
+        msgapfill=None,
+        annoont=None,
         ignore_experimental_data=False,
-        baseline_objective=0.01,
-        flux_coefficients=None,
+        reaction_scores={}
     ):
         """Simulates a single phenotype
         Parameters
@@ -84,32 +219,31 @@ class MSGrowthPhenotype:
         ignore_experimental_data : bool
             Indicates if existing growth data in the phenotype should be ignored when computing the class of the simulated phenotype
         """
+        output = {
+            "objective_value": 0,
+            "experimental_value": self.experimental_value,
+            "class": "N",
+            "reactions":None,
+            "gfreactions":None,
+            "gapfill_count":0,
+            "gapfill_count_with_genes":0,
+            "reaction_count":0,
+            "fluxes":None,
+            "objective_string":self.objective.to_string()
+        }
+        #Translating model is not MSModelUtil
         modelutl = model_or_mdlutl
         if not isinstance(model_or_mdlutl, MSModelUtil):
             modelutl = MSModelUtil.get(model_or_mdlutl)
-
-        #Setting the objective from the phenotype type - this will add missing exchanges for the primary compound for uptake and excretion phenotypes
-        missing_transporters = []
-        objstring = modelutl.set_objective_from_phenotype(self,missing_transporters)
-
-        #Creating output datastructure and returning if the objective cannot be created
-        output = {
-            "objective_value": 0,
-            "class": "N",
-            "missing_transports": missing_transporters,
-            "baseline_objective": 0,
-            "objective":objstring,
-            "baseline_objective":baseline_objective
-        }
-        if objstring == None:
-            return output
-
-        # Building full media and adding missing exchanges
-        full_media = self.build_media()
-
-        #Adding missing exchanges
-        if add_missing_exchanges:
-            output["missing_transports"].extend(modelutl.add_missing_exchanges(full_media))
+        target_mdlutl = modelutl
+        #Switching target model to msgapfill if gapfilling is True
+        if gapfilling:
+            if msgapfill == None:
+                logger.warning(
+                    "MSGapfill must be provided in order to run phenotype gapfilling analysis!"
+                )
+                return None
+            target_mdlutl = msgapfill.gfmodelutl
         
         # Getting basline growth
         if objstring != None and output["baseline_objective"] == None and self.parent:
@@ -208,85 +342,136 @@ class MSGrowthPhenotype:
             output["postive"] = False
             if self.experimental_value == None or ignore_experimental_data:
                 output["class"] = "N"
-            elif self.experimental_value > 0:
-                output["class"] = "FN"
-            elif self.experimental_value == 0:
-                output["class"] = "CN"
+                if gapfilling:
+                    for rxnid in original_bounds:
+                        if rxnid in target_mdlutl.model.reactions:
+                            if ">" in original_bounds[rxnid]:
+                                target_mdlutl.model.reactions.get_by_id(rxnid).upper_bound = original_bounds[rxnid][">"]
+                            if "<" in original_bounds[rxnid]:
+                                target_mdlutl.model.reactions.get_by_id(rxnid).lower_bound = original_bounds[rxnid]["<"]
+                    solution = target_mdlutl.model.optimize()
+                    if solution.status != "optimal" or solution.objective_value < growth_threshold:
+                        output["class"] = determine_phenotype_class(output["class"], self.experimental_value, ignore_experimental_data)
+                        output["status"] = "gapfilling failed"
+                        return output
+                else:
+                    output["class"] = determine_phenotype_class(output["class"], self.experimental_value, ignore_experimental_data)
+                    output["status"] = "No growth without gapfilling"
+                    return output
+            #Negative growth conditions have exited at this point, so we can proceed with solution analysis
+            output["class"] = determine_phenotype_class(output["class"], self.experimental_value, ignore_experimental_data)
+            # TODO: "bio1" is hardcoded here - should use target_mdlutl.primary_biomass() or pass as parameter
+            target_mdlutl.model.reactions.get_by_id("bio1").lower_bound = growth_threshold
+            original_objective = target_mdlutl.model.objective
+            coefobj = target_mdlutl.model.problem.Objective(0, direction="min")
+            target_mdlutl.model.objective = coefobj
+            obj_coef = {}
+            direction_list = [">","<"]
+            for rxn in gapfilling_coefs:
+                if rxn in target_mdlutl.model.reactions:
+                    rxnobj = target_mdlutl.model.reactions.get_by_id(rxn)
+                    for direction in direction_list:
+                        if direction == ">":
+                            obj_coef[rxnobj.forward_variable] = gapfilling_coefs[rxn][direction]
+                        elif direction == "<":
+                            obj_coef[rxnobj.reverse_variable] = gapfilling_coefs[rxn][direction]
+            coefobj.set_linear_coefficients(obj_coef)
+            solution = target_mdlutl.model.optimize()
+            target_mdlutl.model.objective = original_objective
+            target_mdlutl.model.reactions.get_by_id("bio1").lower_bound = 0
+            #Processing solution
+            output["fluxes"] = {}
+            output["reactions"] = []
+            output["gfreactions"] = {}
+            for rxn in target_mdlutl.model.reactions:
+                if rxn.id in solution.fluxes:
+                    flux = solution.fluxes[rxn.id]
+                    if abs(flux) > 0.000001:
+                        output["fluxes"][rxn.id] = flux
+                        if rxn.id[0:3] != "bio" and rxn.id[0:3] != "EX_" and rxn.id[0:3] != "DM_" and rxn.id[0:3] != "SK":
+                            output["reaction_count"] += 1
+                            output["reactions"].append(rxn.id)
+                            if rxn.id not in modelutl.model.reactions or (flux < -0.000001 and modelutl.model.reactions.get_by_id(rxn.id).lower_bound >= 0) or (flux > 0.000001 and modelutl.model.reactions.get_by_id(rxn.id).upper_bound <= 0):
+                                output["gapfill_count"] += 1
+                                if flux < -0.000001:
+                                    output["gfreactions"][rxn.id] = ["<",None]
+                                else:
+                                    output["gfreactions"][rxn.id] = [">",None]
+                                base_rxn_id = rxn.id.replace("_c0", "")
+                                if base_rxn_id in rxn_gene_hash and len(rxn_gene_hash[base_rxn_id]) > 0:
+                                    output["gfreactions"][rxn.id][1] = list(rxn_gene_hash[base_rxn_id].keys())
+                                    output["gapfill_count_with_genes"] += 1
+            #Iteratively testing all gapfilled reactions just to be sure
+            #First, block all gapfilling reactions except the ones identified as needed
+            for rxnid in original_bounds:
+                if rxnid not in output["gfreactions"] and rxnid in target_mdlutl.model.reactions:
+                    if ">" in original_bounds[rxnid]:
+                        target_mdlutl.model.reactions.get_by_id(rxnid).upper_bound = 0
+                    if "<" in original_bounds[rxnid]:
+                        target_mdlutl.model.reactions.get_by_id(rxnid).lower_bound = 0
+            #Now test each gapfilled reaction to see if it's truly needed
+            to_remove = []
+            for rxnid in output["gfreactions"]:
+                if rxnid in target_mdlutl.model.reactions:
+                    if output["gfreactions"][rxnid][0] == ">":
+                        target_mdlutl.model.reactions.get_by_id(rxnid).upper_bound = 0
+                    else:
+                        target_mdlutl.model.reactions.get_by_id(rxnid).lower_bound = 0
+                    solution = target_mdlutl.model.optimize()
+                    if solution.objective_value > growth_threshold:
+                        #Removing unneeded gapfilled reactions
+                        print("Removing unneeded gapfilled reaction: "+rxnid)
+                        to_remove.append(rxnid)
+                    else:
+                        if output["gfreactions"][rxnid][0] == ">" and rxnid in original_bounds and ">" in original_bounds[rxnid]:     
+                            target_mdlutl.model.reactions.get_by_id(rxnid).upper_bound = original_bounds[rxnid][">"]
+                        elif output["gfreactions"][rxnid][0] == "<" and rxnid in original_bounds and "<" in original_bounds[rxnid]:
+                            target_mdlutl.model.reactions.get_by_id(rxnid).lower_bound = original_bounds[rxnid]["<"]
+                        else:
+                            logger.warning("Reaction "+rxnid+" not found in original bounds")
+            for rxnid in to_remove:
+                del output["gfreactions"][rxnid]
+                output["gapfill_count"] -= 1
+                if rxnid in output["reactions"]:
+                    output["reactions"].remove(rxnid)
+                    output["reaction_count"] -= 1
+                if rxnid in output["fluxes"]:
+                    del output["fluxes"][rxnid]
+            #Maximizing growth one final time
+            final_solution = target_mdlutl.model.optimize()
+            output["objective_value"] = final_solution.objective_value
         return output
 
-    def gapfill_model_for_phenotype(
-        self,
-        msgapfill,
-        test_conditions,
-        multiplier=10,
-        add_missing_exchanges=False,
-    ):
-        """Gapfills the model to permit this single phenotype to be positive
-        Parameters
-        ----------
-        msgapfill : MSGapfill
-            Fully configured gapfilling object
-        add_missing_exchanges : bool
-            Boolean indicating if exchanges for compounds mentioned explicitly in phenotype media should be added to the model automatically
-        multiplier : double
-            Indicates a multiplier to use for positive growth above the growth on baseline media
-        objective : string
-            Expression for objective to be activated by gapfilling
-        """
-        # First simulate model without gapfilling to assess ungapfilled growth
-        output = self.simulate(
-            msgapfill.mdlutl,multiplier, add_missing_exchanges
-        )
-        if output["objective_value"] >= output["baseline_objective"] * multiplier:
-            # No gapfilling needed - original model grows without gapfilling
-            return {
-                "reversed": {},
-                "new": {},
-                "media": self.build_media(),
-                "target": output["objective"],
-                "minobjective": output["baseline_objective"] * multiplier,
-                "binary_check": False,
-            }
-
-        # Now pulling the gapfilling configured model from MSGapfill
-        gfmodelutl = MSModelUtil.get(msgapfill.gfmodel)
-        # Saving the gapfill objective because this will be replaced when the simulation runs
-        gfobj = gfmodelutl.model.objective
-        # Running simulate on gapfill model to add missing exchanges and set proper media and uptake limit constraints
-        output = self.simulate(
-            gfmodelutl, multiplier=multiplier, add_missing_exchanges=add_missing_exchanges
-        )
-        # If the gapfilling model fails to achieve the minimum growth, then no solution exists
-        if output["objective_value"] < output["baseline_objective"] * multiplier:
-            logger.warning(
-                "Gapfilling failed with the specified model, media, and target reaction."
-            )
-            return None
-
-        # Running the gapfilling itself
-        full_media = self.build_media()
-        with gfmodelutl.model:
-            # Applying gene knockouts
-            for gene in self.gene_ko:
-                if gene in gfmodelutl.model.genes:
-                    geneobj = gfmodelutl.model.genes.get_by_id(gene)
-                    geneobj.knock_out()
-
-            gfresults = self.gapfilling.run_gapfilling(
-                full_media, None, minimum_obj=output["baseline_objective"] * multiplier
-            )
-            if gfresults is None:
-                logger.warning(
-                    "Gapfilling failed with the specified model, media, and target reaction."
-                )
-
-        return gfresults
-
+def determine_phenotype_class(current_class, experimental_value, ignore_experimental_data):
+    if ignore_experimental_data:
+        experimental_value = None
+    if current_class == "P":
+        if experimental_value == None:
+            return "P"
+        elif experimental_value > 0:
+            return "CP"
+        elif experimental_value == 0:
+            return "FP"
+    else:
+        if experimental_value == None:
+            return "N"
+        elif experimental_value > 0:
+            return "FN"
+        elif experimental_value == 0:
+            return "CN"
 
 class MSGrowthPhenotypes:
     def __init__(
-        self, base_media=None, base_uptake=0, base_excretion=1000, global_atom_limits={}
+        self, base_media=None, base_uptake=0, base_excretion=1000, global_atom_limits={}, id=None, name=None, source=None, source_id=None, type=None
     ):
+        # Check if base_media is a MSMedia object
+        if not isinstance(base_media, MSMedia) and base_media is not None:
+            base_media = MSMedia.from_kbase_object(base_media)
+        self.id = id
+        self.name = name
+        self.source = source
+        self.source_id = source_id
+        self.type = type
         self.base_media = base_media
         self.phenotypes = DictList()
         self.base_uptake = base_uptake
@@ -294,6 +479,91 @@ class MSGrowthPhenotypes:
         self.atom_limits = global_atom_limits
         self.baseline_objective_data = {}
         self.cached_based_growth = {}
+
+    def to_dict(self, media_output_type="complete"):
+        """
+        Convert MSGrowthPhenotypes to a dictionary.
+
+        This function serializes the entire phenotype set including all media objects,
+        allowing the phenotype set to be saved locally and restored later without
+        needing to re-fetch from KBase.
+
+        Parameters:
+            media_output_type (str): Output type for media serialization.
+                Options: "minimal", "bounds", "complete" (default: "complete")
+
+        Returns:
+            dict: Dictionary representation of the phenotype set
+        """
+        output = {
+            'id': self.id,
+            'name': self.name,
+            'source': self.source,
+            'source_id': self.source_id,
+            'type': self.type,
+            'base_uptake': self.base_uptake,
+            'base_excretion': self.base_excretion,
+            'atom_limits': dict(self.atom_limits) if self.atom_limits else {},
+        }
+
+        # Serialize base_media if present
+        if self.base_media:
+            output['base_media'] = self.base_media.to_dict(output_type=media_output_type)
+            output['base_media_id'] = self.base_media.id
+            output['base_media_name'] = self.base_media.name
+            output['base_media_ref'] = self.base_media.media_ref
+
+        # Serialize all phenotypes
+        output['phenotypes'] = []
+        for pheno in self.phenotypes:
+            output['phenotypes'].append(pheno.to_dict(media_output_type=media_output_type))
+
+        return output
+
+    @staticmethod
+    def from_dict(data):
+        """
+        Create MSGrowthPhenotypes from a dictionary.
+
+        This function reconstructs the entire phenotype set from a dictionary,
+        including all media objects. Use this to load a phenotype set that was
+        previously saved using to_dict().
+
+        Parameters:
+            data (dict): Dictionary containing phenotype set data
+
+        Returns:
+            MSGrowthPhenotypes: A new MSGrowthPhenotypes instance
+        """
+        # Reconstruct base_media if present
+        base_media = None
+        if 'base_media' in data and data['base_media']:
+            base_media = MSMedia.from_dict(data['base_media'])
+            base_media.id = data.get('base_media_id', 'media')
+            base_media.name = data.get('base_media_name', '')
+            base_media.media_ref = data.get('base_media_ref')
+
+        # Create the phenotype set
+        growthpheno = MSGrowthPhenotypes(
+            base_media=base_media,
+            base_uptake=data.get('base_uptake', 0),
+            base_excretion=data.get('base_excretion', 1000),
+            global_atom_limits=data.get('atom_limits', {}),
+            id=data.get('id'),
+            name=data.get('name'),
+            source=data.get('source'),
+            source_id=data.get('source_id'),
+            type=data.get('type')
+        )
+
+        # Reconstruct all phenotypes
+        new_phenos = []
+        for pheno_data in data.get('phenotypes', []):
+            newpheno = MSGrowthPhenotype.from_dict(pheno_data, parent=growthpheno)
+            new_phenos.append(newpheno)
+
+        growthpheno.add_phenotypes(new_phenos)
+        return growthpheno
 
     @staticmethod
     def from_compound_hash(
@@ -305,7 +575,7 @@ class MSGrowthPhenotypes:
         type="growth"
     ):
         growthpheno = MSGrowthPhenotypes(
-            base_media, base_uptake, base_excretion, global_atom_limits
+            base_media=base_media, base_uptake=base_uptake, base_excretion=base_excretion, global_atom_limits=global_atom_limits, id=None, name=None, source=None, source_id=None, type=None
         )
         new_phenos = []
         for cpd in compounds:
@@ -324,7 +594,7 @@ class MSGrowthPhenotypes:
         global_atom_limits={},
     ):
         growthpheno = MSGrowthPhenotypes(
-            base_media, base_uptake, base_excretion, global_atom_limits
+            base_media=base_media, base_uptake=base_uptake, base_excretion=base_excretion, global_atom_limits=global_atom_limits, id=data["id"], name=data["name"], source=data["source"], source_id=data["source_id"], type=data["type"]
         )
         new_phenos = []
         for pheno in data["phenotypes"]:
@@ -335,8 +605,9 @@ class MSGrowthPhenotypes:
             added_compounds = []
             for added_cpd in pheno["additionalcompound_refs"]:
                 added_compounds.append(added_cpd.split("/").pop())
+            msmedia = MSMedia.from_kbase_object(media)
             newpheno = MSGrowthPhenotype(
-                media.info.id, media, pheno["normalizedGrowth"], geneko, added_compounds
+                msmedia.id,name=msmedia.name, base_media=msmedia, experimental_value=pheno["normalizedGrowth"], knockouts=geneko, additional_compounds=added_compounds,parent=growthpheno
             )
             new_phenos.append(newpheno)
         growthpheno.add_phenotypes(new_phenos)
@@ -373,13 +644,15 @@ class MSGrowthPhenotypes:
                         {"mediaws": None, "geneko": [], "addtlCpd": []},
                     )
                     media = kbase_api.get_from_ws(data["media"], data["mediaws"])
+                    msmedia = MSMedia(media.id, name=media.name)
+                    msmedia.mediacompounds = media.mediacompounds
                     id = data["media"]
                     if len(data["geneko"]) > 0:
                         id += "-" + ",".join(data["geneko"])
                     if len(data["addtlCpd"]) > 0:
                         id += "-" + ",".join(data["addtlCpd"])
                     newpheno = MSGrowthPhenotype(
-                        id, media, data["growth"], data["geneko"], data["addtlCpd"]
+                        id, msmedia, data["growth"], data["geneko"], data["addtlCpd"]
                     )
                     new_phenos.append(newpheno)
         growthpheno.add_phenotypes(new_phenos)
@@ -414,6 +687,27 @@ class MSGrowthPhenotypes:
             new_phenos.append(newpheno)
         growthpheno.add_phenotypes(new_phenos)
         return growthpheno
+
+    def to_kbase_json(self,genome_ref):
+        pheno_data = {
+            "id": self.id,
+            "name": self.name,
+            "source": self.source,
+            "source_id": self.source_id,
+            "type": self.type,
+            "phenotypes": [],
+            "genome_ref": genome_ref
+        }
+        for pheno in self.phenotypes:
+            pheno_data["phenotypes"].append({
+                "id": pheno.id,
+                "name": pheno.name,
+                "media_ref": pheno.base_media.media_ref,
+                "normalizedGrowth": pheno.experimental_value,
+                "geneko_refs": pheno.knockouts,
+                "additionalcompound_refs": pheno.additional_compounds
+            })
+        return pheno_data
 
     def build_super_media(self):
         super_media = None
@@ -466,16 +760,14 @@ class MSGrowthPhenotypes:
     def simulate_phenotypes(
         self,
         model_or_mdlutl,
-        multiplier=3,
+        growth_threshold=0.01,
         add_missing_exchanges=False,
-        save_fluxes=False,
-        save_reaction_list=False,
         gapfill_negatives=False,
         msgapfill=None,
         test_conditions=None,
         ignore_experimental_data=False,
-        flux_coefficients=None,
-        recall_phenotypes=True
+        annoont=None,
+        reaction_scores={}
     ):
         """Simulates all the specified phenotype conditions and saves results
         Parameters
@@ -495,6 +787,10 @@ class MSGrowthPhenotypes:
         modelutl = model_or_mdlutl
         if not isinstance(model_or_mdlutl, MSModelUtil):
             modelutl = MSModelUtil.get(model_or_mdlutl)
+        # Prefilter gapfilling database if gapfilling will be performed
+        if gapfill_negatives and msgapfill and test_conditions != None:
+            logger.info("Prefiltering gapfilling database before phenotype simulations")
+            msgapfill.prefilter(test_conditions=test_conditions)
         # Establishing output of the simulation method
         summary = {
             "Label": ["Accuracy", "CP", "CN", "FP", "FN", "P", "N"],
@@ -512,18 +808,18 @@ class MSGrowthPhenotypes:
         # Running simulations
         gapfilling_solutions = {}
         totalcount = 0
-        datahash = {}
-        print(self.phenotypes)
+        datahash = {"summary": {}}
         for pheno in self.phenotypes:
             mdlUtil = MSModelUtil(modelutl.model, copy=True)
             result = pheno.simulate(
-                mdlUtil,
-                multiplier,
-                add_missing_exchanges,
-                save_fluxes,
-                save_reaction_list=save_reaction_list,
+                modelutl,
+                gapfilling=gapfill_negatives,
+                msgapfill=msgapfill,
+                add_missing_exchanges=add_missing_exchanges,
+                growth_threshold=growth_threshold,
                 ignore_experimental_data=ignore_experimental_data,
-                flux_coefficients=flux_coefficients
+                annoont=annoont,
+                reaction_scores=reaction_scores
             )
             datahash[pheno.id] = result
             data["Class"].append(result["class"])
@@ -533,54 +829,38 @@ class MSGrowthPhenotypes:
             data["Transports missing"].append(";".join(result["missing_transports"]))
             if result["class"] == "CP":
                 summary["Count"][1] += 1
+                summary["Count"][5] += 1
                 summary["Count"][0] += 1
                 totalcount += 1
             elif result["class"] == "CN":
                 summary["Count"][2] += 1
                 summary["Count"][0] += 1
+                summary["Count"][6] += 1
                 totalcount += 1
             elif result["class"] == "FP":
                 summary["Count"][3] += 1
+                summary["Count"][5] += 1
                 totalcount += 1
             elif result["class"] == "FN":
                 summary["Count"][4] += 1
+                summary["Count"][6] += 1
                 totalcount += 1
             elif result["class"] == "P":
                 summary["Count"][5] += 1
             elif result["class"] == "N":
                 summary["Count"][6] += 1
-            # Gapfilling negative growth conditions
-            if gapfill_negatives and result["class"] in ["N", "FN", "CN"]:
-                gapfilling_solutions[pheno] = pheno.gapfill_model_for_phenotype(
-                    msgapfill,
-                    test_conditions,
-                    multiplier,
-                    add_missing_exchanges,
-                )
-                if gapfilling_solutions[pheno] != None:
-                    data["Gapfilling score"] = 0
-                    list = []
-                    for rxn_id in gapfilling_solutions[pheno]["reversed"]:
-                        list.append(
-                            gapfilling_solutions[pheno]["reversed"][rxn_id] + rxn_id
-                        )
-                        data["Gapfilling score"] += 0.5
-                    for rxn_id in gapfilling_solutions[pheno]["new"]:
-                        list.append(gapfilling_solutions[pheno]["new"][rxn_id] + rxn_id)
-                        data["Gapfilling score"] += 1
-                    data["Gapfilled reactions"].append(";".join(list))
-                else:
-                    data["Gapfilled reactions"].append(None)
-            else:
-                data["Gapfilled reactions"].append(None)
         if totalcount == 0:
             summary["Count"][0] = None
         else:
             summary["Count"][0] = summary["Count"][0] / totalcount
-        sdf = pd.DataFrame(summary)
-        df = pd.DataFrame(data)
-        self.adjust_phenotype_calls(df)
-        return {"details": df, "summary": sdf,"data":datahash}
+        datahash["summary"]["accuracy"] = summary["Count"][0]
+        datahash["summary"]["CP"] = summary["Count"][1]
+        datahash["summary"]["CN"] = summary["Count"][2]
+        datahash["summary"]["FP"] = summary["Count"][3]
+        datahash["summary"]["FN"] = summary["Count"][4]
+        datahash["summary"]["P"] = summary["Count"][5]
+        datahash["summary"]["N"] = summary["Count"][6]
+        return {"details": data, "summary": summary,"data":datahash}
 
     def adjust_phenotype_calls(self,data,baseline_objective=0.01):
         lowest = data["Simulated objective"].min()

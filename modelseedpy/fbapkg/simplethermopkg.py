@@ -12,8 +12,8 @@ class SimpleThermoPkg(BaseFBAPkg):
             self,
             model,
             "simple thermo",
-            {"potential": "metabolite", "dgbinF": "reaction", "dgbinR": "reaction"},
-            {"thermo": "reaction"},
+            {"potential": "metabolite", "dgp":"reaction"},
+            {"thermo": "reaction", "dgpc": "reaction"},
         )
         self.pkgmgr.addpkgs(["RevBinPkg"])
 
@@ -23,71 +23,58 @@ class SimpleThermoPkg(BaseFBAPkg):
             [],
             {
                 "filter": None,
-                "min_potential": 0,
-                "max_potential": 1000,
-                "dgbin": False,
-                "reduced_constraints": False,
+                "max_potential": 10000,
+                "exclude_reactions": []
             },
         )
         self.pkgmgr.getpkg("RevBinPkg").build_package(self.parameters["filter"])
         for metabolite in self.model.metabolites:
-            self.build_vars(metabolite)
+            self.build_potential_variable(metabolite)
         for reaction in self.model.reactions:
-            if reaction.id[:3] not in ["EX_", "SK_", "DM_"]:
-                # determine the range of Delta_rG values
-                objective_coefficient = {}
-                for metabolite in reaction.metabolites:
-                    objective_coefficient[
-                        self.variables["potential"][metabolite.id]
-                    ] = reaction.metabolites[metabolite]
+            if reaction.id[:3] not in ["EX_", "SK_", "DM_"] and reaction.id not in self.parameters["exclude_reactions"]:
+                self.build_dgp_variable(reaction)
+                self.build_dgp_constraint(reaction)
+                self.build_fluxcoupling_constraint(reaction)
 
-                # define the minimum and maximum progressions
-                self.modelutl.add_objective(Zero, "min", objective_coefficient)
-                min_value = self.modelutl.model.slim_optimize()
-                self.modelutl.add_objective(Zero, "max", objective_coefficient)
-                max_value = self.modelutl.model.slim_optimize()
-
-                # build constraints for the filtered reactions
-                if self.parameters["filter"] is None or reaction.id in self.parameters["filter"]:
-                    self.build_cons(reaction, min_value, max_value)
-
-        if self.parameters["dgbin"]:
-            # define the model objective as the sum of the dgbin variables
-            self.optimize_dgbin()
-
-    def build_vars(self, obj):
-        return BaseFBAPkg.build_variable(
-            self,
+    def build_potential_variable(self, object):
+        return self.build_variable(
             "potential",
-            self.parameters["min_potential"],
+            -1*self.parameters["max_potential"],
             self.parameters["max_potential"],
             "continuous",
             obj,
         )
+    
+    def build_dgp_variable(self, object):
+        return self.build_variable(
+            "dgp",
+            -1*self.parameters["max_potential"],
+            self.parameters["max_potential"],
+            "continuous",
+            object,
+        )
 
-    def build_cons(self, obj, min_energy, max_energy):
-        # Gibbs: dg = Sum(n_(i,j)*\Delta G_(j))
-        # 0 <= max_abs_energy*revbin(i) - |min_energy|*dgbinR + max_energy*dgbinF + dg <= max_abs_energy
+    def build_dgp_constraint(self, object):
+        # Gibbs: dg = Sum(st(i,j)*p(j))
+        # 0 <= (-1) dgp(i) + Sum(st(i,j)*p(j)) <= 0
+        coef = {}
+        for metabolite in object.metabolites:
+            coef[self.variables["potential"][metabolite.id]] = object.metabolites[
+                metabolite
+            ]
+        coef[self.variables["dgp"][object.id]] = -1
 
-        coef = {self.variables["potential"][metabolite.id]: obj.metabolites[metabolite]
-                for metabolite in obj.metabolites}
-        max_abs_energy = max([abs(min_energy), abs(max_energy)])
-        built_constraint = None
-        if not self.parameters["reduced_constraints"]:
-            coef[self.pkgmgr.getpkg("RevBinPkg").variables["revbin"][obj.id]] = max_abs_energy
-            if self.parameters["dgbin"]:
-                # build the dgbin variables
-                BaseFBAPkg.build_variable(self, "dgbinF", 0, 1, "binary", obj)
-                BaseFBAPkg.build_variable(self, "dgbinR", 0, 1, "binary", obj)
-                # define the dgbin coefficients
-                coef[self.variables["dgbinF"][obj.id]] = max_energy
-                coef[self.variables["dgbinR"][obj.id]] = abs(min_energy)
-            # build the constraint
-            built_constraint = BaseFBAPkg.build_constraint(self, "thermo", 0, max_abs_energy, coef, obj)
+        return self.build_constraint(
+            "dgpc", 0, 0, coef, object
+        )
 
-        return built_constraint
-
-    def optimize_dgbin(self):
-        dgbin_vars = [self.variables["dgbinF"][reaction] for reaction in self.variables["dgbinF"]
-                      ] + [self.variables["dgbinR"][reaction] for reaction in self.variables["dgbinR"]]
-        self.modelutl.add_objective(dgbin_vars, "max")
+    def build_fluxcoupling_constraint(self, object):
+        # Gibbs: dg = Sum(st(i,j)*p(j)) 
+        #  0 <= dgp(i) + max_energy_magnitude*revbin(i) <= max_energy_magnitude
+        coef = {}
+        coef[self.variables["dgp"][object.id]] = 1
+        coef[self.pkgmgr.getpkg("RevBinPkg").variables["revbin"][object.id]] = self.parameters["max_potential"]+1
+        # build the constraint
+        return self.build_constraint(
+            "thermo", 0, (self.parameters["max_potential"]+1), coef, object
+        )
