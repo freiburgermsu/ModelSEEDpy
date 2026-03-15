@@ -18,7 +18,7 @@ from modelseedpy.core.msatpcorrection import MSATPCorrection
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
-    logging.INFO
+    logging.WARNING
 )  # When debugging - set this to INFO then change needed messages below from DEBUG to INFO
 
 class MSEnsemble:
@@ -57,14 +57,19 @@ class MSEnsemble:
                 "reactions": {}
             }
             for rxn in self.model.reactions:
+                probability = 0
+                if rxn.id[0:3] == "bio" or rxn.id[0:3] == "EX_" or rxn.id[0:3] == "DM_"  or rxn.id[0:3] == "SK_" or len(rxn.genes) == 0: 
+                    probability = 1
                 self.data["reactions"][rxn.id] = {
                     "presence": "",
                     "gapfilling":"",
-                    "genes": {}
+                    "genes": {},
+                    "probability": probability
                 }
                 for gene in rxn.genes:
                     self.data["reactions"][rxn.id]["genes"][gene.id] = {
-                        "presence": ""
+                        "presence": "",
+                        "probability": 0.2
                     }
             if reaction_probabilities:
                 self.reset_reaction_probabilities(reaction_probabilities)
@@ -82,14 +87,12 @@ class MSEnsemble:
         #Overwriting reaction probabilities from input hash
         for rxnid in reaction_probability_hash:
             if rxnid in self.model.reactions:
-                rxnobj = self.model.reactions.get_by_id(rxnid)
                 if rxnid not in self.data["reactions"]:
-                    self.data["reactions"][rxnid] = {"presence":"","genes":{}}
+                    self.data["reactions"][rxnid] = {"probability":0,"presence":"","genes":{}}
                 if "probability" in reaction_probability_hash[rxnid]:
                     self.data["reactions"][rxnid]["probability"] = reaction_probability_hash[rxnid]["probability"]
                 if "genes" in reaction_probability_hash[rxnid]:
                     for geneid in reaction_probability_hash[rxnid]["genes"]:
-                        #if geneid in rxnobj.genes:
                         self.data["reactions"][rxnid]["genes"][geneid] = {"presence":"","probability":reaction_probability_hash[rxnid]["genes"][geneid]}
     
     def rebuild_from_models(self,models):#DONE
@@ -200,23 +203,31 @@ class MSEnsemble:
                     self.data["reactions"][rxnid]["presence"] += "1"
                 else:
                     self.data["reactions"][rxnid]["presence"] += "0"
+                #Updating reaction probabilities from presence data
+                count = 0
+                for item in self.data["reactions"][rxnid]["presence"]:
+                    if item == "1":
+                        count += 1
+                self.data["reactions"][rxnid]["probability"] = count/len(self.data["reactions"][rxnid]["presence"])
+        #Saving ensemble data in model attributes
+        return self.save_ensemble_model()
 
     def unpack_models(self,model_list=None):
-        output_models = [None]*self.size
-        for i in range(self.size):
+        output_models = [None]*self.data["size"]
+        for i in range(10):#self.data["size"]):
             if not model_list or i in model_list:
                 clone_mdl = cobra.io.json.from_json(cobra.io.json.to_json(self.model))
                 clone_mdl_utl = MSModelUtil.get(clone_mdl)
                 remove_reactions = []
                 for rxn in clone_mdl_utl.model.reactions:
                     if rxn.id in self.data["reactions"]:
-                        if self.data["reactions"][rxn.id][i] == "0":
+                        if self.data["reactions"][rxn.id]["presence"][i] == "0":
                             remove_reactions.append(rxn)
                         else:
                             new_genes = []
                             for gene in rxn.genes:
                                 if gene.id in self.data["reactions"][rxn.id]["genes"]:
-                                    if self.data["reactions"][rxn.id]["genes"][gene.id][i] == "1":
+                                    if self.data["reactions"][rxn.id]["genes"][gene.id]["presence"][i] == "1":
                                         new_genes.append(gene)
                             rxn.gene_reaction_rule = " or ".join([gene.id for gene in new_genes])
                     else:

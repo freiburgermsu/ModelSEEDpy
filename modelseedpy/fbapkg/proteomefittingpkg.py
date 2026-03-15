@@ -46,7 +46,7 @@ class ProteomeFittingPkg(BaseFBAPkg):
         )
         objvars = []
         # Converting genome proteome to reaction proteome if necessary
-        if self.parameters["proteome"].type == GENOME:
+        if self.parameters["proteome"].type == "genome":
             self.parameters["proteome"] = self.parameters[
                 "proteome"
             ].build_reaction_expression(
@@ -124,7 +124,7 @@ class ProteomeFittingPkg(BaseFBAPkg):
             # kvfit(i) = kapp(i)*ProtCoef*Prot(i) - v(i)
             # Pulling expression value for selected condition and reaction
             expval = self.parameters["proteome"].get_value(
-                object.id, self.parameters["condition"], COLUMN_NORM
+                object.id, self.parameters["condition"], "column_norm"
             )
             if expval is None and self.parameters["default_expression"] is not None:
                 if self.parameters["default_expression"] == LOWEST:

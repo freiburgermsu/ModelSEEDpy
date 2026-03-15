@@ -19,6 +19,7 @@ class ProblemReplicationPkg(BaseFBAPkg):
         # First loading shared variables into a hash
         shared_var_hash = {}
         for pkg in self.parameters["shared_variable_packages"]:
+            fbapkg = self.modelutl.pkgmgr.getpkg(pkg)
             for obj_type in self.parameters["shared_variable_packages"][pkg]:
                 if obj_type in pkg.variables:
                     for objid in pkg.variables[obj_type]:
@@ -34,8 +35,9 @@ class ProblemReplicationPkg(BaseFBAPkg):
             new_var_hash = {}
             for var in othermdl.variables:
                 if var.name not in shared_var_hash:
-                    newvar = Variable.clone(var)
-                    newvar.name = var.name + "." + str(count)
+                    newvar = self.model.problem.Variable(
+                        var.name + "." + str(count), lb=var.lb, ub=var.ub, type=var.type
+                    )
                     self.variables[str(count)][var.name] = newvar
                     new_var_hash[var.name] = newvar
                     newobj.append(newvar)

@@ -8,6 +8,7 @@ import re
 import json
 from optlang.symbolics import Zero, add
 from cobra import Model, Reaction, Metabolite
+from cobra.flux_analysis import pfba
 from cobra.io import (
     load_json_model,
     save_json_model,
@@ -21,10 +22,10 @@ from modelseedpy.core.fbahelper import FBAHelper
 
 logger = logging.getLogger(__name__)
 logger.setLevel(
-    logging.INFO
+    logging.WARNING
 )  # When debugging - set this to INFO then change needed messages below from DEBUG to INFO
 
-base_blacklist = {}#{"rxn00062":"="}
+base_blacklist = {"rxn04656":"=","rxn07589":"<","rxn07588":"<"}
 zero_threshold = 1e-8
 
 
@@ -65,7 +66,7 @@ class GapfillingPkg(BaseFBAPkg):
                         index_hash[m[2]] = 0
                     index_hash[m[2]] += 1
             else:
-                index_hash["none":0]
+                index_hash["none"] += 1
                 # Iterating over all indecies with more than 10 intracellular compounds:
         return index_hash
 
@@ -242,6 +243,8 @@ class GapfillingPkg(BaseFBAPkg):
         for reaction in self.model.reactions:
             if reaction.id in self.gapfilling_penalties:
                 if "reverse" in self.gapfilling_penalties[reaction.id]:
+                    if reaction.id not in self.maxflux_variables:
+                        self.maxflux_variables[reaction.id] = {}
                     self.maxflux_variables[reaction.id][
                         "reverse"
                     ] = self.build_variable(
@@ -258,6 +261,8 @@ class GapfillingPkg(BaseFBAPkg):
                         reaction,
                     )
                 if "forward" in self.gapfilling_penalties[reaction.id]:
+                    if reaction.id not in self.maxflux_variables:
+                        self.maxflux_variables[reaction.id] = {}
                     self.maxflux_variables[reaction.id][
                         "forward"
                     ] = self.build_variable(
@@ -686,11 +691,11 @@ class GapfillingPkg(BaseFBAPkg):
             return None
         return solution
 
-    def test_gapfill_database(self):
+    def test_gapfill_database(self,active_reactions=[]):
         self.reset_objective_minimum(0,False)
         self.model.objective = self.original_objective
         self.test_solution = self.model.optimize()
-        logger.info(
+        logger.debug(
             "Objective with gapfill database:"
             + str(self.test_solution.objective_value)
             + "; min objective:"
@@ -700,6 +705,11 @@ class GapfillingPkg(BaseFBAPkg):
         self.model.objective = self.parameters["gfobj"]
         if self.test_solution.objective_value < self.parameters["minimum_obj"] or self.test_solution.status == 'infeasible':
             return False
+        #Running pFBA to determine active reactions for nonzero objective
+        solution = pfba(self.model)
+        for rxn in self.model.reactions:
+            if solution.fluxes[rxn.id] > 0:
+                active_reactions.append([rxn.id,">"])
         return True
 
     def reset_objective_minimum(self, min_objective,reset_params=True):
@@ -718,7 +728,7 @@ class GapfillingPkg(BaseFBAPkg):
             if min_objective < 0:
                 self.pkgmgr.getpkg("ObjConstPkg").constraints["objc"]["1"].ub = min_objective
 
-    def filter_database_based_on_tests(self,test_conditions,growth_conditions=[],base_filter=None,base_target="rxn00062_c0",base_filter_only=False):
+    def filter_database_based_on_tests(self,test_conditions,growth_conditions=[],base_filter=None,base_target="rxn00062_c0",base_filter_only=False,all_noncore=True,active_reaction_sets=[]):
         #Saving the current media
         current_media = self.current_media()
         #Clearing element uptake constraints
@@ -745,15 +755,26 @@ class GapfillingPkg(BaseFBAPkg):
         if not base_filter_only:
             with self.model:
                 rxnlist = []
+                rxndict = {}
                 for reaction in self.model.reactions:
                     if reaction.id in self.gapfilling_penalties:
+                        rxndict[reaction.id] = 1
                         if "reverse" in self.gapfilling_penalties[reaction.id]:
                             rxnlist.append([reaction, "<"])
                         if "forward" in self.gapfilling_penalties[reaction.id]:
                             rxnlist.append([reaction, ">"])
+                    elif all_noncore and not self.modelutl.is_core(reaction):
+                        rxndict[reaction.id] = 1
+                        if reaction.lower_bound < 0:
+                            rxnlist.append([reaction, "<"])
+                        if reaction.upper_bound > 0:
+                            rxnlist.append([reaction, ">"])
+                logger.debug("Full model: %d", len(self.modelutl.model.reactions))
+                logger.debug("Gapfilling count: %d", len(self.gapfilling_penalties))
+                logger.debug("Reaction list: %d", len(rxndict))
                 filtered_list = self.modelutl.reaction_expansion_test(
-                    rxnlist, test_conditions
-                )
+                    rxnlist, test_conditions,active_reaction_sets=active_reaction_sets
+                )#,positive_growth=growth_conditions
         #Adding base filter reactions to model
         if base_filter != None:
             gf_filter_att = self.modelutl.get_attributes("gf_filter", {})
@@ -822,12 +843,13 @@ class GapfillingPkg(BaseFBAPkg):
             filtered_list = self.modelutl.reaction_expansion_test(
                 self.parameters["original_reactions"], test_conditions,positive_growth=growth_conditions
             )
-            for item in filtered_list:
-                logger.debug("Filtering:" + item[0].id + item[1])
-                if item[1] == ">":
-                    self.model.reactions.get_by_id(item[0].id).upper_bound = 0
-                else:
-                    self.model.reactions.get_by_id(item[0].id).lower_bound = 0
+            if filtered_list:
+                for item in filtered_list:
+                    logger.debug("Filtering:" + item[0].id + item[1])
+                    if item[1] == ">":
+                        self.model.reactions.get_by_id(item[0].id).upper_bound = 0
+                    else:
+                        self.model.reactions.get_by_id(item[0].id).lower_bound = 0
         # Restoring gapfilling objective function and minimal objective constraint
         self.reset_objective_minimum(self.parameters["minimum_obj"])
         self.model.objective = self.parameters["gfobj"]
