@@ -64,10 +64,6 @@ def minimizeFlux_withGrowth(model_util, min_growth, obj):
     model_util.add_minimal_objective_cons(min_growth, name="min_growth")
     model_util.add_objective(obj, "min")
     sol = model_util.model.optimize()
-    # exchange = "EX_cpd00082_e0"
-    # for var in model_util.model.variables:
-    #     if exchange in var.name:
-    #         print(var.name, var.primal)
     sol_dict = bioFlux_check(model_util.model, sol, None, min_growth)
     return sol, sol_dict
 
@@ -80,6 +76,7 @@ class MSMinimalMedia:
         exchanges = model_util.exchange_list() if interacting else model_util.transport_list()
         for rxn in exchanges:
             # TODO: double-check the sign of the exchange variables
+            # prevent miniscule exchanges
             exVar = model_util.model.problem.Variable(f"{rxn.id}_bin", lb=0, ub=1, type="binary")
             model_util.add_cons_vars(exVar)
             model_util.create_constraint(model_util.model.problem.Constraint(Zero, ub=0, name=f"{rxn.id}_M"),
@@ -94,32 +91,27 @@ class MSMinimalMedia:
         return influxes, model_util
 
     @staticmethod
-    def minimize_flux(org_model, min_growth=None, environment=None, interacting=True, pfba=True,
-                      climit=None, o2limit=None, printing=True, minExchange=None, errorOut=True):
+    def minimize_flux(org_model=None, min_growth=None, environment=None, interacting=True, pfba=True,
+                      climit=None, o2limit=None, printing=True, minExchange=None, errorOut=True, model_util=None):
         """minimize the total in-flux of exchange reactions in the model"""
-        # print("start", org_model.slim_optimize())
-        # print(errorOut)
+        org_model = org_model or model_util.model
+        orgObj = org_model.objective
         if org_model.slim_optimize() == 0:
             mess = f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations."
             if errorOut:
                 raise ObjectiveError(mess)
             print(mess)
             return {}, None
-        model_util = MSModelUtil(org_model, True, environment or org_model.medium, climit, o2limit)
+        model_util = model_util or MSModelUtil(org_model, True, environment or org_model.medium, climit, o2limit)
+        
         # define the MILP
-        # print("beginning", model_util.model.slim_optimize())
         sol_growth = model_util.run_fba(None, pfba).fluxes[model_util.biomass_objective]
-        # print("mid", model_util.model.slim_optimize())
         ## some models can't grow at min_growth and therefore are limited by their max_growth
         min_growth = sol_growth if min_growth is None else min(min_growth, sol_growth)
         minExchange = minExchange or min_growth/1000
         media_exchanges, model_util = MSMinimalMedia._influx_objective(model_util, interacting, minExchange)
-        # print("towards end", model_util.model.slim_optimize())
-        # for cons in model_util.model.constraints:
-        #     if "min" in cons.name and "EX_" in cons.name:
-        #         print(cons.name, cons.ub, cons.expression, cons.lb)
-        #         break
         sol, sol_dict = minimizeFlux_withGrowth(model_util, min_growth, sum(media_exchanges))
+        
         # parse the minimal media
         min_media = _exchange_solution(sol_dict, clean_fluxes=True)
         total_flux = sum([abs(flux) for flux in min_media.values()])
@@ -129,6 +121,11 @@ class MSMinimalMedia:
         if printing:
             print(f"The minimal flux media for {org_model.id} consists of {len(min_media)} compounds and a {total_flux} total influx,"
                   f" with a growth value of {simulated_sol.objective_value}")
+
+        # restore model properties
+        model_util.model.objective = orgObj
+        model_util.model.solver.update()
+        model_util.remove_constraint("min_growth")
         return min_media, sol
 
     @staticmethod

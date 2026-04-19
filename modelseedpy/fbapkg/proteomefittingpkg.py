@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 from optlang.symbolics import add
 from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 from modelseedpy.core.fbahelper import FBAHelper
-from modelseedpy.multiomics.msexpression import GENOME, COLUMN_NORM
 
 # Options for default behavior
 LOWEST = 10
