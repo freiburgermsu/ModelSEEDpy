@@ -60,7 +60,7 @@ def bioFlux_check(model, sol=None, sol_dict=None, min_growth=0.1):
     return sol_dict
 
 def minimizeFlux_withGrowth(model_util, min_growth, obj):
-    ic(model_util.model.id, "growth", model_util.model.slim_optimize())
+    # ic(model_util.model.id, "growth", model_util.model.slim_optimize())
     model_util.add_minimal_objective_cons(min_growth, name="min_growth")
     model_util.add_objective(obj, "min")
     sol = model_util.model.optimize()
@@ -99,7 +99,7 @@ class MSMinimalMedia:
         """minimize the total in-flux of exchange reactions in the model"""
         # print("start", org_model.slim_optimize())
         # print(errorOut)
-        if org_model.slim_optimize() == 0:
+        if org_model.slim_optimize() < 1e-6:
             mess = f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations."
             if errorOut:
                 raise ObjectiveError(mess)

@@ -48,7 +48,7 @@ setup(
         "openpyxl",
         "multiprocess",
         "h5py",
-        "graphviz"
+        "graphviz",
         "Jinja2 >= 3.1.4",
         "sympy >=1.12.0",
     ],

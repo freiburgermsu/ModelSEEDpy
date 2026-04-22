@@ -61,6 +61,7 @@ from modelseedpy.fbapkg import (
     RevBinPkg,
     ReactionUsePkg,
     SimpleThermoPkg,
+    CommKineticPkg,
     TotalFluxPkg,
     BilevelPkg,
     KBaseMediaPkg,
