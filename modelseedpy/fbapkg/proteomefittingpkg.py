@@ -8,7 +8,10 @@ logger = logging.getLogger(__name__)
 from optlang.symbolics import add
 from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 from modelseedpy.core.fbahelper import FBAHelper
+<<<<<<< HEAD
 from modelseedpy.multiomics.msexpression import MSExpression
+=======
+>>>>>>> 9eaf7b92f563f2d4bc37bda4f48c1a879484e503
 
 # Options for default behavior
 LOWEST = 10
