@@ -94,15 +94,9 @@ class MSMinimalMedia:
     def minimize_flux(org_model=None, min_growth=None, environment=None, interacting=True, pfba=True,
                       climit=None, o2limit=None, printing=True, minExchange=None, errorOut=True, model_util=None):
         """minimize the total in-flux of exchange reactions in the model"""
-<<<<<<< HEAD
-        # print("start", org_model.slim_optimize())
-        # print(errorOut)
-        if org_model.slim_optimize() < 1e-6:
-=======
         org_model = org_model or model_util.model
         orgObj = org_model.objective
-        if org_model.slim_optimize() == 0:
->>>>>>> 9eaf7b92f563f2d4bc37bda4f48c1a879484e503
+        if org_model.slim_optimize() < 1e-6:
             mess = f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations."
             if errorOut:
                 raise ObjectiveError(mess)
