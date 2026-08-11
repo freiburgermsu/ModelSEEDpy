@@ -56,7 +56,7 @@ def bioFlux_check(model, sol=None, sol_dict=None, min_growth=0.1):
         raise ObjectiveError(f"The assigned minimal_growth of {min_growth} was not maintained during the simulation,"
                              f" where the observed growth value was {simulated_growth}.")
     if sol.status != "optimal":
-        display(sol)
+        print(sol)
     return sol_dict
 
 def minimizeFlux_withGrowth(model_util, min_growth, obj):
@@ -97,17 +97,36 @@ class MSMinimalMedia:
     def minimize_flux(org_model, min_growth=None, environment=None, interacting=True, pfba=True,
                       climit=None, o2limit=None, printing=True, minExchange=None, errorOut=True):
         """minimize the total in-flux of exchange reactions in the model"""
-        # print("start", org_model.slim_optimize())
-        # print(errorOut)
-        if org_model.slim_optimize() == 0:
-            mess = f"The model {org_model.id} possesses an objective value of 0 in complete media, which is incompatible with minimal media computations."
+        # Wrap a copy WITHOUT passing the environment through MSModelUtil.__init__:
+        # __init__ applies the environment to the ORIGINAL model before copying, so
+        # the caller's model was left carrying this call's medium — in a media
+        # sweep, the first non-growing medium permanently poisoned every later
+        # minimal-media computation on that model.
+        model_util = MSModelUtil(org_model, True, None, climit, o2limit)
+        if environment:
+            model_util.add_medium(environment)
+            # re-tighten the O2 cap: cobra's medium setter overwrites the
+            # EX_cpd00007_e0 lower bound that the limits block of
+            # MSModelUtil.__init__ set (bool guard: isnumber(False) is True)
+            eff_o2 = None
+            if isinstance(o2limit, (int, float)) and not isinstance(o2limit, bool):
+                eff_o2 = o2limit
+            elif isinstance(climit, (int, float)) and not isinstance(climit, bool):
+                eff_o2 = climit / 3
+            if eff_o2 is not None and "EX_cpd00007_e0" in model_util.model.reactions:
+                o2_rxn = model_util.model.reactions.get_by_id("EX_cpd00007_e0")
+                o2_rxn.lower_bound = max(o2_rxn.lower_bound, -eff_o2)
+        # the growth guard must run under the requested environment (on the copy),
+        # not under whatever medium the caller's model happened to carry
+        growth = model_util.model.slim_optimize()
+        if growth != growth or growth <= 1e-8:
+            mess = (f"The model {org_model.id} possesses an objective value of {growth} under the"
+                    " requested environment, which is incompatible with minimal media computations.")
             if errorOut:
                 raise ObjectiveError(mess)
             print(mess)
             return {}, None
-        model_util = MSModelUtil(org_model, True, environment or org_model.medium, climit, o2limit)
         # define the MILP
-        # print("beginning", model_util.model.slim_optimize())
         sol_growth = model_util.run_fba(None, pfba).fluxes[model_util.biomass_objective]
         # print("mid", model_util.model.slim_optimize())
         ## some models can't grow at min_growth and therefore are limited by their max_growth
