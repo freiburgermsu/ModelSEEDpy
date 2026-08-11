@@ -103,52 +103,54 @@ class MSMinimalMedia:
         # sweep, the first non-growing medium permanently poisoned every later
         # minimal-media computation on that model.
         model_util = MSModelUtil(org_model, True, None, climit, o2limit)
-        if environment:
-            model_util.add_medium(environment)
-            # re-tighten the O2 cap: cobra's medium setter overwrites the
-            # EX_cpd00007_e0 lower bound that the limits block of
-            # MSModelUtil.__init__ set (bool guard: isnumber(False) is True)
-            eff_o2 = None
-            if isinstance(o2limit, (int, float)) and not isinstance(o2limit, bool):
-                eff_o2 = o2limit
-            elif isinstance(climit, (int, float)) and not isinstance(climit, bool):
-                eff_o2 = climit / 3
-            if eff_o2 is not None and "EX_cpd00007_e0" in model_util.model.reactions:
-                o2_rxn = model_util.model.reactions.get_by_id("EX_cpd00007_e0")
-                o2_rxn.lower_bound = max(o2_rxn.lower_bound, -eff_o2)
-        # the growth guard must run under the requested environment (on the copy),
-        # not under whatever medium the caller's model happened to carry
-        growth = model_util.model.slim_optimize()
-        if growth != growth or growth <= 1e-8:
-            mess = (f"The model {org_model.id} possesses an objective value of {growth} under the"
-                    " requested environment, which is incompatible with minimal media computations.")
-            if errorOut:
-                raise ObjectiveError(mess)
-            print(mess)
-            return {}, None
-        # define the MILP
-        sol_growth = model_util.run_fba(None, pfba).fluxes[model_util.biomass_objective]
-        # print("mid", model_util.model.slim_optimize())
-        ## some models can't grow at min_growth and therefore are limited by their max_growth
-        min_growth = sol_growth if min_growth is None else min(min_growth, sol_growth)
-        minExchange = minExchange or min_growth/1000
-        media_exchanges, model_util = MSMinimalMedia._influx_objective(model_util, interacting, minExchange)
-        # print("towards end", model_util.model.slim_optimize())
-        # for cons in model_util.model.constraints:
-        #     if "min" in cons.name and "EX_" in cons.name:
-        #         print(cons.name, cons.ub, cons.expression, cons.lb)
-        #         break
-        sol, sol_dict = minimizeFlux_withGrowth(model_util, min_growth, sum(media_exchanges))
-        # parse the minimal media
-        min_media = _exchange_solution(sol_dict, clean_fluxes=True)
-        total_flux = sum([abs(flux) for flux in min_media.values()])
-        simulated_sol = verify(org_model, min_media)
-        if simulated_sol.status != "optimal":
-            raise FeasibilityError(f"The simulation was not optimal, with a status of {simulated_sol.status}")
-        if printing:
-            print(f"The minimal flux media for {org_model.id} consists of {len(min_media)} compounds and a {total_flux} total influx,"
-                  f" with a growth value of {simulated_sol.objective_value}")
-        return min_media, sol
+        try:
+            if environment:
+                model_util.add_medium(environment)
+                # re-tighten the O2 cap: cobra's medium setter overwrites the
+                # EX_cpd00007_e0 lower bound that the limits block of
+                # MSModelUtil.__init__ set (bool guard: isnumber(False) is True)
+                eff_o2 = None
+                if isinstance(o2limit, (int, float)) and not isinstance(o2limit, bool):
+                    eff_o2 = o2limit
+                elif isinstance(climit, (int, float)) and not isinstance(climit, bool):
+                    eff_o2 = climit / 3
+                if eff_o2 is not None and "EX_cpd00007_e0" in model_util.model.reactions:
+                    o2_rxn = model_util.model.reactions.get_by_id("EX_cpd00007_e0")
+                    o2_rxn.lower_bound = max(o2_rxn.lower_bound, -eff_o2)
+            # the growth guard must run under the requested environment (on the copy),
+            # not under whatever medium the caller's model happened to carry
+            growth = model_util.model.slim_optimize()
+            if growth != growth or growth <= 1e-8:
+                mess = (f"The model {org_model.id} possesses an objective value of {growth} under the"
+                        " requested environment, which is incompatible with minimal media computations.")
+                if errorOut:
+                    raise ObjectiveError(mess)
+                print(mess)
+                return {}, None
+            # define the MILP
+            sol_growth = model_util.run_fba(None, pfba).fluxes[model_util.biomass_objective]
+            ## some models can't grow at min_growth and therefore are limited by their max_growth
+            min_growth = sol_growth if min_growth is None else min(min_growth, sol_growth)
+            minExchange = minExchange or min_growth/1000
+            media_exchanges, model_util = MSMinimalMedia._influx_objective(model_util, interacting, minExchange)
+            sol, sol_dict = minimizeFlux_withGrowth(model_util, min_growth, sum(media_exchanges))
+            # parse the minimal media
+            min_media = _exchange_solution(sol_dict, clean_fluxes=True)
+            total_flux = sum([abs(flux) for flux in min_media.values()])
+            simulated_sol = verify(org_model, min_media)
+            if simulated_sol.status != "optimal":
+                raise FeasibilityError(f"The simulation was not optimal, with a status of {simulated_sol.status}")
+            if printing:
+                print(f"The minimal flux media for {org_model.id} consists of {len(min_media)} compounds and a {total_flux} total influx,"
+                      f" with a growth value of {simulated_sol.objective_value}")
+            return min_media, sol
+        finally:
+            # release the throwaway util's MSPackageManager entry: the class-level
+            # pkgmgrs dict would otherwise pin this util AND its full model copy
+            # for the process lifetime — one leaked copy per minimal-media call,
+            # which OOM-killed large multi-worker media sweeps
+            from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
+            MSPackageManager.pkgmgrs.pop(model_util, None)
 
     @staticmethod
     def determine_min_media(model, minimization_method="minFlux", min_growth=None, environment=None, interacting=True, pfba=True,
