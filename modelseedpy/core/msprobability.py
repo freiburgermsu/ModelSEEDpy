@@ -153,7 +153,9 @@ class MSProbability:
     @staticmethod
     def prFBA(model_s_, environment=None, abundances=None, min_prob=0.01, prob_exp=1, ex_weight=100,
               commkinetics=None, kinetics_coef=1000, printLP=False, expression=None):
-        from modelseedpy.community.commhelper import build_from_species_models
+        # community modeling lives in the standalone MSCommunity package
+        from mscommunity.commhelper import build_from_species_models
+        from mscommunity.mscommsim import MSCommunity
         from modelseedpy.core.msmodelutl import MSModelUtil
         from modelseedpy.fbapkg.elementuptakepkg import ElementUptakePkg
         from optlang.symbolics import Zero
@@ -165,9 +167,8 @@ class MSProbability:
         elepkg = ElementUptakePkg(mdlUtil.model)  ;  elepkg.build_package({"C": 100})
         ## the total flux through the members proportional to their relative abundances
         if not commkinetics and len(model_s_) > 1:
-            # pkgmgr = MSPackageManager.get_pkg_mgr(mdlUtil.model)
-            MSCommObj = MSCommunity(mdlUtil.model, model_s_)
-            # pkgmgr.getpkg("CommKineticPkg").build_package(kinetics_coef, MSCommObj)
+            # the MSCommunity constructor installs the community kinetic rows
+            MSCommObj = MSCommunity(mdlUtil.model, model_s_, kinetic_coeff=kinetics_coef)
         # constrain carbon consumption
         elepkg = ElementUptakePkg(mdlUtil.model)  ;  elepkg.build_package({"C": 100})
         # evaluate the metabolomics data over time

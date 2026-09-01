@@ -20,7 +20,7 @@ setup(
     license=license,
     packages=find_packages(exclude=("docs")),
     package_data={
-        "modelseedpy": ["config.cfg", "community/*.html", "core/*.html", "data/*", "data/categories/*", "data/templates/*"],
+        "modelseedpy": ["config.cfg", "core/*.html", "data/*", "data/categories/*", "data/templates/*"],
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
