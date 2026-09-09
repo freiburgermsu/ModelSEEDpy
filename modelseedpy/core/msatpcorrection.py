@@ -361,7 +361,12 @@ class MSATPCorrection:
             all_solutions = self.msgapfill.run_multi_gapfill(
                 media_list,
                 self.atp_hydrolysis.id,
-                min_objectives,
+                # `min_objectives` maps media -> threshold, so it must bind to
+                # `minimum_objectives`.  Passed positionally it lands in
+                # `target_hash` (added to run_multi_gapfill after this call site),
+                # which then overwrites each media's target reaction id with a
+                # float and crashes find_unproducible_biomass_compounds.
+                minimum_objectives=min_objectives,
                 check_for_growth=False,
             )
 
