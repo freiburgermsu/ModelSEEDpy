@@ -463,17 +463,26 @@ class MSModelUtil:
         elif format == "xml":
             cobra.io.write_sbml_model(self.model, filename)
 
-    def printlp(self,model=None,path="",filename="debug",print=False):
+    def printlp(self, model=None, path="", filename="debug", print=False, lpfilename=None):
+        # Accepts both historic call forms: printlp(model=..., filename=..., print=...)
+        # (msgapfill debug dumps) and the legacy positional printlp("file.lp") used by
+        # the infeasibility dump, which previously lived in a DUPLICATE def below that
+        # shadowed this one and crashed every MSGapfill run.
+        if lpfilename is None and isinstance(model, str):
+            lpfilename, model = model, None
+        if model is None:
+            model = self.model
+        if lpfilename:
+            with open(lpfilename, "w") as out:
+                out.write(str(model.solver))
+            return
         if print:
             import os
             if len(path) > 0:
                 # Ensure directory exists
                 os.makedirs(path, exist_ok=True)
                 path = path + "/"
-            lpfilename = path+filename+".lp"
-            if model == None:
-                model = self.model
-            with open(lpfilename, "w") as out:
+            with open(path + filename + ".lp", "w") as out:
                 out.write(str(model.solver))
 
     def print_solutions(self, solution_hash,filename="reaction_solutions.csv"):
@@ -592,10 +601,6 @@ class MSModelUtil:
     def add_timeout(self, timeout_s=10):
         from optlang.interface import Configuration
         Configuration(self.model.problem, timeout=timeout_s)
-
-    def printlp(self, lpfilename="debug.lp"):
-        with open(lpfilename, "w") as out:
-            out.write(str(self.model.solver))
 
     def build_metabolite_hash(self):
         self.metabolite_hash = {}
@@ -1073,6 +1078,9 @@ class MSModelUtil:
                 active_rxn_dictionary[array[0]][array[1]]+=1
         if self.reliability_scores == None:
             self.reliability_scores = {}
+            # local import: modelseed_biochem imports core modules, so a top-level
+            # import here would be circular; this name was previously simply missing
+            from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
             biochem = ModelSEEDBiochem.get()
             for reaction in self.model.reactions:
                 #Pulling model reaction related data

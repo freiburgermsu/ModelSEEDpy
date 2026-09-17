@@ -66,6 +66,12 @@ def load_default_medias(default_media_path=None, default_min_obj=0.01):
     return atp_medias
 
 
+# The MSATPCorrection.__init__ parameter `load_default_medias` (a bool) shadows the
+# module-level function of the same name inside that scope; the constructor calls the
+# function through this alias.
+_load_default_medias = load_default_medias
+
+
 class MSATPCorrection:
 
     DEBUG = False
@@ -115,7 +121,7 @@ class MSATPCorrection:
         self.atp_medias = []
 
         if load_default_medias:
-            self.atp_medias = load_default_medias(default_media_path)
+            self.atp_medias = _load_default_medias(default_media_path)
             # self.load_default_medias(default_media_path)
 
         media_ids = set()
@@ -496,6 +502,14 @@ class MSATPCorrection:
         self.filtered_noncore = self.modelutl.reaction_expansion_test(
             self.noncore_reactions, tests, attribute_label="atp_expansion_filter"
         )
+        if self.filtered_noncore is None:
+            # reaction_expansion_test returns None as a sentinel meaning NO subset of the
+            # noncore reactions satisfies an ATP test condition, so nothing can usefully
+            # be filtered; restore everything unfiltered rather than crash.
+            logger.warning(
+                "ATP expansion test found no passing solution for %s; restoring all "
+                "noncore reactions unfiltered.", self.model.id)
+            self.filtered_noncore = []
         # Removing filtered reactions
         for item in self.filtered_noncore:
             logger.debug("Removing " + item[0].id + " " + item[1])

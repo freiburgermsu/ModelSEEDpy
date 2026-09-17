@@ -512,7 +512,7 @@ class MSGapfill:
         test_output = self.test_and_adjust_gapfilling_conditions(media_list,targets,thresholds,prefilter=prefilter)
         #If there are no media left, don't run gapfilling
         if len(test_output["medias"]) == 0:
-            return None
+            return {}  # callers iterate the result (e.g. MSATPCorrection.evaluate_growth_media); None crashed them
         #Iterating over all media and running gapfilling
         solution_dictionary = {}
         cumulative_solution = []

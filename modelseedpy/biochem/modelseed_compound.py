@@ -30,9 +30,13 @@ class ModelSEEDCompound2(Metabolite):
         pkb=None,
         source=None,
         flags=None,
+        pathways=None,
     ):
 
         super().__init__(cpd_id, formula, name, charge, compartment)
+        # carried through by the biochem loader (modelseed_biochem._load_metabolites),
+        # which passed this kwarg without the class accepting it
+        self.pathways = pathways
         self.seed_id = cpd_id
         self.abbr = abbr
         self.names = set()
