@@ -33,11 +33,14 @@ min_gap = {
 }
 
 default_threshold_multipiers = {
+    "Pyr": 2,
     "Glc": 2,
     "default": 1.2,
 }
 
-
+# Module-level loader, used by MSBuilder.build_and_gapfill to get the default
+# media without an MSATPCorrection instance. MSATPCorrection.load_default_medias
+# below is the method that fills self.atp_medias.
 def load_default_medias(default_media_path=None, default_min_obj=0.01):
     if default_media_path is None:
         import os.path as _path
@@ -64,12 +67,6 @@ def load_default_medias(default_media_path=None, default_min_obj=0.01):
         min_obj = min_gap.get(media_id, default_min_obj)
         atp_medias.append([media, min_obj])
     return atp_medias
-
-
-# The MSATPCorrection.__init__ parameter `load_default_medias` (a bool) shadows the
-# module-level function of the same name inside that scope; the constructor calls the
-# function through this alias.
-_load_default_medias = load_default_medias
 
 
 class MSATPCorrection:
@@ -109,6 +106,7 @@ class MSATPCorrection:
             self.modelutl = MSModelUtil.get(model_or_mdlutl)
         # Setting atpcorrection attribute in model utl so link is bidirectional
         self.modelutl.atputl = self
+        
         self.compartment = compartment
 
         if atp_hydrolysis_id and atp_hydrolysis_id in self.model.reactions:
@@ -121,25 +119,7 @@ class MSATPCorrection:
         self.atp_medias = []
 
         if load_default_medias:
-            self.atp_medias = _load_default_medias(default_media_path)
-            # self.load_default_medias(default_media_path)
-
-        media_ids = set()
-        for media_or_list in atp_medias:
-            media = (
-                media_or_list[0] if isinstance(media_or_list, list) else media_or_list
-            )
-            min_obj = media_or_list[1] if isinstance(media_or_list, list) else 0.01
-            if media.id in media_ids:
-                raise ValueError("media ids not unique")
-            media_ids.add(media.id)
-            self.atp_medias.append((media, min_obj))
-            self.media_hash[media.id] = media
-        if "empty" not in self.media_hash:
-            media = MSMedia.from_dict({})
-            media.id = "empty"
-            media.name = "empty"
-            self.media_hash[media.id] = media
+            self.load_default_medias(default_media_path)
 
         self.forced_media = []
         for media_id in forced_media:
@@ -157,12 +137,8 @@ class MSATPCorrection:
         else:
             self.coretemplate = core_template
 
-        self.msgapfill = MSGapfill(
-            self.modelutl,
-            default_gapfill_templates=[core_template],
-            default_target=self.atp_hydrolysis.id,
-        )
         # These should stay as None until atp correction is actually run
+        self.msgapfill = None
         self.cumulative_core_gapfilling = None
         self.selected_media = None
         self.original_bounds = {}
@@ -173,12 +149,21 @@ class MSATPCorrection:
         self.lp_filename = None
         self.multiplier = 1.2
 
+    def get_msgapfill(self):
+        if self.msgapfill is None:
+            self.msgapfill = MSGapfill(
+                self.modelutl,
+                default_gapfill_templates=[self.coretemplate],
+                default_target=self.atp_hydrolysis.id,
+            )
+        return self.msgapfill
+    
     def load_default_template(self):
         self.coretemplate = MSTemplateBuilder.from_dict(
             get_template("template_core"), None
         ).build()
 
-    def load_default_medias(self, default_media_path=None, min_obj=0.01):
+    def load_default_medias(self, default_media_path=None):
         if default_media_path is None:
             import os.path as _path
 
@@ -272,7 +257,7 @@ class MSATPCorrection:
         self.other_compartments = []
         # Iterating through reactions and disabling
         for reaction in self.model.reactions:
-            gfrxn = self.msgapfill.gfmodel.reactions.get_by_id(reaction.id)
+            gfrxn = self.get_msgapfill().gfmodel.reactions.get_by_id(reaction.id)
             if reaction.id == self.atp_hydrolysis.id:
                 continue
             if FBAHelper.is_ex(reaction):
@@ -320,7 +305,7 @@ class MSATPCorrection:
                 gfrxn.lower_bound = 0
                 gfrxn.upper_bound = 0
 
-    def evaluate_growth_media(self):
+    def evaluate_growth_media(self,no_gapfilling=False):
         """
         Determines how much gap filling each input test media requires to make ATP
 
@@ -328,9 +313,9 @@ class MSATPCorrection:
         """
         self.disable_noncore_reactions()
         self.media_gapfill_stats = {}
-        self.msgapfill.default_gapfill_templates = [self.coretemplate]
+        self.get_msgapfill().default_gapfill_templates = [self.coretemplate]
         if self.lp_filename:
-            self.msgapfill.lp_filename = self.lp_filename
+            self.get_msgapfill().lp_filename = self.lp_filename
         output = {}
         with self.model:
             self.model.objective = self.atp_hydrolysis.id
@@ -364,21 +349,21 @@ class MSATPCorrection:
                     self.media_gapfill_stats[media] = {"reversed": {}, "new": {}}
 
             # Now running gapfilling on all conditions where initially there was no growth
-            all_solutions = self.msgapfill.run_multi_gapfill(
-                media_list,
-                self.atp_hydrolysis.id,
-                # `min_objectives` maps media -> threshold, so it must bind to
-                # `minimum_objectives`.  Passed positionally it lands in
-                # `target_hash` (added to run_multi_gapfill after this call site),
-                # which then overwrites each media's target reaction id with a
-                # float and crashes find_unproducible_biomass_compounds.
-                minimum_objectives=min_objectives,
-                check_for_growth=False,
-            )
-
-            # Adding the new solutions to the media gapfill stats
-            for media in all_solutions:
-                self.media_gapfill_stats[media] = all_solutions[media]
+            if not no_gapfilling:
+                all_solutions = self.get_msgapfill().run_multi_gapfill(
+                    media_list,
+                    target=self.atp_hydrolysis.id,
+                    minimum_objectives=min_objectives,
+                    prefilter=False,
+                    check_for_growth=False,
+                    gapfilling_mode="Independent",
+                    run_sensitivity_analysis=False,
+                    integrate_solutions=False,
+                )
+                logger.debug(str(all_solutions))
+                # Adding the new solutions to the media gapfill stats
+                for media in all_solutions:
+                    self.media_gapfill_stats[media] = all_solutions[media]
 
         if MSATPCorrection.DEBUG:
             export_data = {}
@@ -461,8 +446,8 @@ class MSATPCorrection:
                 stats is not None
                 and MSGapfill.gapfill_count(self.media_gapfill_stats[media]) > 0
             ):
-                self.msgapfill.integrate_gapfill_solution(
-                    stats, self.cumulative_core_gapfilling, link_gaps_to_objective=False
+                self.get_msgapfill().integrate_gapfill_solution(
+                    stats, self.cumulative_core_gapfilling,check_for_growth=False
                 )
                 # Adding reactions to gapfilling sensitivity structure so we can track all gapfilled reactions
                 gf_sensitivity = self.modelutl.get_attributes("gf_sensitivity", {})
@@ -503,9 +488,9 @@ class MSATPCorrection:
             self.noncore_reactions, tests, attribute_label="atp_expansion_filter"
         )
         if self.filtered_noncore is None:
-            # reaction_expansion_test returns None as a sentinel meaning NO subset of the
-            # noncore reactions satisfies an ATP test condition, so nothing can usefully
-            # be filtered; restore everything unfiltered rather than crash.
+            # reaction_expansion_test returns None as a sentinel meaning NO subset of
+            # the noncore reactions satisfies an ATP test condition, so nothing can
+            # usefully be filtered; restore everything unfiltered rather than crash.
             logger.warning(
                 "ATP expansion test found no passing solution for %s; restoring all "
                 "noncore reactions unfiltered.", self.model.id)
@@ -574,6 +559,12 @@ class MSATPCorrection:
         Raises
         ------
         """
+        #Checking if ATP stats have been run yet and if not, running them
+        if not self.selected_media:
+            logger.warning("ATP tests not yet computed - running without allowing for model changes!")
+            self.evaluate_growth_media(no_gapfilling=True)
+            self.determine_growth_media()
+            self.restore_noncore_reactions()
         # Applying threshold multiplier
         for key in default_threshold_multipiers:
             if key not in multiplier_hash_override:

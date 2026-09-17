@@ -163,15 +163,20 @@ class FBAHelper:
         if len(compartments) == 0:
             if re.search("(?<=\_)(\w\d+)", reaction.id):   return reaction.id.split("_")[-1]
             agora_comp = re.compile("(?<=\[)(.+)(?=\])")
-            if agora_comp.search([met for met in reaction.metabolites][0].id) is not None:
-                compartments = [agora_comp.search(met.id).groups() for met in reaction.metabolites]
-                print(Counter(compartments))
-                return list(Counter(compartments).keys())[0]
+            hits = [agora_comp.search(met.id) for met in reaction.metabolites]
+            compartments = [hit.group() for hit in hits if hit is not None]
+            if len(compartments) == 0:  return None
         if len(compartments) == 1:  return compartments[0]
-        for comp in compartments:
-            if comp[0:1] != "e":  return comp
-            elif comp[0:1] == "e":  extracellular = comp
-        return extracellular
+        # reaction.compartments is a set, so the compartments are sorted before
+        # choosing: returning whichever came first made the answer depend on the
+        # hash seed, and with it which reactions ATP correction treats as noncore.
+        # A compartment that is neither the cytosol nor the extracellular space
+        # wins, else the cytosol.
+        cytosol = othercomp = None
+        for comp in sorted(set(compartments)):
+            if comp[0:1] == "c":  cytosol = comp
+            elif comp[0:1] != "e":  othercomp = comp
+        return othercomp or cytosol
     
     @staticmethod
     def clean_fluxes(sol_fluxes, tol=1e-8):

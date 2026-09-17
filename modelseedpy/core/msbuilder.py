@@ -974,7 +974,7 @@ class MSBuilder:
 
         return added_reactions, add_exchanges
 
-    def build(
+    def build_and_gapfill(
         self,
         model_or_id,
         gapfill_media,
@@ -1050,6 +1050,33 @@ class MSBuilder:
         MSBuilder.integrate_gapfill_solution(self.template, model_gapfilled, gap_sol)
 
         return model_gapfilled, atp_correction, tests, gap_sol
+
+    def build(
+        self,
+        model_or_id,
+        index="0",
+        allow_all_non_grp_reactions=False,
+        annotate_with_rast=True,
+        biomass_classic=False,
+        biomass_gc=0.5,
+        add_reaction_from_rast_annotation=True,
+    ):
+        """Build the base model from the genome and the template.
+
+        Kept with this signature, and returning the model itself, because that
+        is what the callers here and in msensemble, KBUtilLib and
+        KB-ModelSEEDReconstruction pass and expect. The pipeline that also runs
+        ATP correction and gapfilling is build_and_gapfill.
+        """
+        return self.build_base_model(
+            model_or_id,
+            index,
+            allow_all_non_grp_reactions,
+            annotate_with_rast,
+            biomass_classic,
+            biomass_gc,
+            add_reaction_from_rast_annotation,
+        )
 
     def build_base_model(
         self,
@@ -1247,7 +1274,10 @@ class MSBuilder:
     def gapfill_model(original_mdl, target_reaction, template, media):
         # Deferred import to avoid circular dependency
         from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
-        FBAHelper.set_objective_from_target_reaction(original_mdl, target_reaction)
+        from modelseedpy.core.msmodelutl import MSModelUtil
+        # FBAHelper.set_objective_from_target_reaction was removed; MSModelUtil
+        # carries it now
+        MSModelUtil.get(original_mdl).set_objective_from_target_reaction(target_reaction)
         model = cobra.io.json.from_json(cobra.io.json.to_json(original_mdl))  #!!! what is the benefit of this I/O processing?
         pkgmgr = MSPackageManager.get_pkg_mgr(model)
         pkgmgr.getpkg("GapfillingPkg").build_package(
@@ -1261,6 +1291,8 @@ class MSBuilder:
         pkgmgr.getpkg("KBaseMediaPkg").build_package(media)
         # with open('Gapfilling.lp', 'w') as out:
         #    out.write(str(model.solver))
+        # compute_gapfilled_solution reads the primal values of the last solve
+        model.optimize()
         gfresults = pkgmgr.getpkg("GapfillingPkg").compute_gapfilled_solution()
         for rxnid in gfresults["reversed"]:
             rxn = original_mdl.reactions.get_by_id(rxnid)

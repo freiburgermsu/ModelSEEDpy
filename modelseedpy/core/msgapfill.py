@@ -69,7 +69,7 @@ class MSGapfill:
         self.gfmodel.id = self.model.id + "_gf"
         self.gfmodelutl = MSModelUtil.get(self.gfmodel)
         # Getting package manager for gapfilling model
-        self.gfpkgmgr = MSPackageManager.get_pkg_mgr(self.gfmodelutl)
+        self.gfpkgmgr = MSPackageManager.get_pkg_mgr(self.gfmodel)
         # Setting target from input
         if default_target:
             self.default_target = default_target

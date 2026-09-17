@@ -315,9 +315,11 @@ class MSModelUtil:
         for met in stoichiometry:
             stoich = stoichiometry[met]
             if not isinstance(met, str):
+                # metabolite_msid, not the ID-only lookup of FBAHelper: a proton
+                # identified by its annotation must also drop out of the string
                 met = (
                     None
-                    if FBAHelper.modelseed_id_from_cobra_metabolite(met) == "cpd00067"
+                    if MSModelUtil.metabolite_msid(met) == "cpd00067"
                     else met.id
                 )
             if met:
@@ -379,7 +381,10 @@ class MSModelUtil:
                 raise ModelError(f"The {model.id} objective value is corrupted by being copied,"
                                  f" where the original objective value is {org_obj_val}"
                                  f" and the new objective value is {new_obj_val}.")
-        self.pkgmgr = MSPackageManager.get_pkg_mgr(self)
+        # Keyed by the model, as BaseFBAPkg and every other caller do: keying
+        # by the util object gave each model a second package manager, which
+        # the release in minimal media then could not free.
+        self.pkgmgr = MSPackageManager.get_pkg_mgr(self.model)
         self.wsid = None
         self.atputl = None
         self.gfutl = None
@@ -414,7 +419,7 @@ class MSModelUtil:
         if "C_elements" in self.model.constraints:    return
         if o2limit is False and climit is False:  return
         if o2limit is None and climit is None:
-            print(f"Neither carbon consumption nor oxygen consumption are defined in {self.id}")       
+            logger.debug(f"Neither carbon consumption nor oxygen consumption are defined in {self.id}")
         else:
             if not FBAHelper.isnumber(climit) and FBAHelper.isnumber(o2limit):   climit = 3*o2limit
             elif not FBAHelper.isnumber(climit):  climit = 60
@@ -539,7 +544,6 @@ class MSModelUtil:
                 forced_media=forced_media,
                 default_media_path=atp_media_filename
             )
-            self.atputl = MSATPCorrection(self.model)
         return self.atputl
     
     def get_atp_tests(self,core_template=None,atp_media_filename=None,recompute=False,remake_atputil=False):
@@ -636,7 +640,7 @@ class MSModelUtil:
             for met in self.metabolite_hash[name]:
                 array = met.id.split("_")
                 if array[1] == compartment or met.compartment == compartment:  return [met]
-            return None
+            return []
         sname = MSModelUtil.search_name(name)
         if sname in self.search_metabolite_hash:
             if not compartment:  return self.search_metabolite_hash[sname]
@@ -898,7 +902,7 @@ class MSModelUtil:
                 if cpd == None:
                     # No cytosol compound exists so choosing the first version we found that does exist
                     cpd = mets[0]
-                if found:
+                if not found:
                     #No transporter currently exists - adding exchange reaction for the compound that does exist
                     output.append(cpd.id)
                     exchange_list.append(cpd)
@@ -2218,7 +2222,6 @@ class MSModelUtil:
             "cpd00009": [1, compartment],
             "cpd00067": [1, compartment],
         }
-        print(compartment)
         stoichiometry = {}
         id_hash = self.msid_hash()
         for msid, content in coefs.items():
@@ -2261,11 +2264,13 @@ class MSModelUtil:
 
     @staticmethod
     def parse_id(cobra_obj):
-        MSID = re.search("(.+)_([a-z])(\d+)$", cobra_obj.id)
-        if MSID is not None:  return (MSID[1], MSID[2], int(MSID[3]))
-        nonMSID = re.search("(.+)\[([a-z])\]$", cobra_obj.id)
-        if nonMSID is not None:  return (nonMSID[1], nonMSID[2])
-        return (cobra_obj.id.replace("EX_", ""), "c" if "EX_" not in cobra_obj.id else "e")
+        # Always a (base id, compartment, index) triple or None: the only
+        # caller unpacks three values and treats None as "not in ID format".
+        MSID = re.search("(.+)_([a-z]+)(\d*)$", cobra_obj.id)
+        if MSID is not None:  return (MSID[1], MSID[2], int(MSID[3]) if MSID[3] else "")
+        nonMSID = re.search("(.+)\[([a-z]+)\]$", cobra_obj.id)
+        if nonMSID is not None:  return (nonMSID[1], nonMSID[2], "")
+        return None
 
     def add_kbase_media(self, kbase_media):
         exIDs = [exRXN.id for exRXN in self.exchange_list()]
