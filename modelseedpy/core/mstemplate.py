@@ -1164,7 +1164,10 @@ class MSTemplate:
         :param compartments:
         :return:
         """
-        duplicates = list(set(self.compartments).intersection(compartments))
+        # Compared by id: the DictList holds objects, so a set intersection
+        # misses a new object carrying an id that is already present, and
+        # the += below then raises
+        duplicates = list(filter(lambda x: x.id in self.compartments, compartments))
         if len(duplicates) > 0:
             logger.error(f"The duplicate compartments {duplicates} cannot be added to the template")
             return None  # !!! Should the non-duplicate compartments still be added?
@@ -1179,7 +1182,10 @@ class MSTemplate:
         :param roles:
         :return:
         """
-        duplicates = list(set(self.roles).intersection(roles))
+        # Compared by id: the DictList holds objects, so a set intersection
+        # misses a new object carrying an id that is already present, and
+        # the += below then raises
+        duplicates = list(filter(lambda x: x.id in self.roles, roles))
         if len(duplicates) > 0:
             logger.error(f"The duplicate roles {duplicates} cannot be added to the template")
             return None  # !!! Should the non-duplicate compartments still be added?
@@ -1194,7 +1200,10 @@ class MSTemplate:
         :param complexes:
         :return:
         """
-        duplicates = list(set(self.complexes).intersection(complexes))
+        # Compared by id: the DictList holds objects, so a set intersection
+        # misses a new object carrying an id that is already present, and
+        # the += below then raises
+        duplicates = list(filter(lambda x: x.id in self.complexes, complexes))
         if len(duplicates) > 0:
             logger.error(f"The duplicate complexes {duplicates} cannot be added to the template")
             return None  # !!! Should the non-duplicate compartments still be added?
@@ -1222,7 +1231,10 @@ class MSTemplate:
         :param compounds:
         :return:
         """
-        duplicates = list(set(self.compounds).intersection(compounds))
+        # Compared by id: the DictList holds objects, so a set intersection
+        # misses a new object carrying an id that is already present, and
+        # the += below then raises
+        duplicates = list(filter(lambda x: x.id in self.compounds, compounds))
         if len(duplicates) > 0:
             logger.error(f"The duplicate compounds {duplicates} cannot be added to the template")
             return None  # !!! Should the non-duplicate compartments still be added?
@@ -1237,7 +1249,10 @@ class MSTemplate:
         :param comp_compounds:
         :return:
         """
-        duplicates = list(set(self.compcompounds).intersection(comp_compounds))
+        # Compared by id: the DictList holds objects, so a set intersection
+        # misses a new object carrying an id that is already present, and
+        # the += below then raises
+        duplicates = list(filter(lambda x: x.id in self.compcompounds, comp_compounds))
         if len(duplicates) > 0:
             logger.error(f"The duplicate comp compounds {duplicates} cannot be added to the template")
             return None  # !!! Should the non-duplicate compartments still be added?
@@ -1273,7 +1288,10 @@ class MSTemplate:
         :param reaction_list:
         :return:
         """
-        duplicates = list(set(self.reactions).intersection(reaction_list))
+        # Compared by id: the DictList holds objects, so a set intersection
+        # misses a new object carrying an id that is already present, and
+        # the += below then raises
+        duplicates = list(filter(lambda x: x.id in self.reactions, reaction_list))
         if len(duplicates) > 0:
             logger.error("unable to add reactions [%s] already present in the template", duplicates)
             return None  # !!! Should the non-duplicate compartments still be added?
@@ -1371,7 +1389,7 @@ class MSTemplate:
             "roles": list(x.get_data() for x in self.roles),
             "complexes": list(x.get_data() for x in self.complexes),
             "reactions": list(x.get_data() for x in self.reactions),
-            "biomasses": list(self.biomasses),
+            "biomasses": [x.get_data() for x in self.biomasses],
             "pathways": [],
             "subsystems": [],
         }
@@ -1613,4 +1631,10 @@ class MSTemplateBuilder:
         template.add_complexes([NewModelTemplateComplex.from_dict(x, template) for x in self.complexes])
         template.add_reactions([MSTemplateReaction.from_dict(x, template) for x in self.reactions])
         template.biomasses += [MSTemplateBiomass.from_dict(x, template) for x in self.biomasses]  # Fixed: create proper biomass objects with template
+
+        # Without this the drains read by from_dict never reach the template, and
+        # MSBuilder.build_drains then creates no DM_ reactions
+        for compound_id, (lb, ub) in (self.drains or {}).items():
+            template.add_drain(compound_id, lb, ub)
+
         return template

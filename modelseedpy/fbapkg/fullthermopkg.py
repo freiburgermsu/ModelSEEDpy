@@ -136,12 +136,10 @@ class FullThermoPkg(BaseFBAPkg):
         objvars = []
         for metabolite in self.model.metabolites:
             if metabolite.id in self.variables["pdgerr"]:
-                objvars.append(1 * self.variables["pdgerr"][metabolite.id])
+                objvars.append(self.variables["pdgerr"][metabolite.id])
             if metabolite.id in self.variables["ndgerr"]:
-                objvars.append(1 * self.variables["ndgerr"][metabolite.id])
-        self.model.objective = self.model.problem.Objective(
-            add(objvars), direction="min", sloppy=True
-        )
+                objvars.append(self.variables["ndgerr"][metabolite.id])
+        self._set_min_objective(objvars)
 
     def build_concfit_objective(self, target_concentrations):
         #Removing all existing concfit constraints
@@ -158,12 +156,20 @@ class FullThermoPkg(BaseFBAPkg):
                 self.build_constraint(
                     "concfit", target_concentrations[metabolite.id], target_concentrations[metabolite.id], {self.variables["pconcfit"][metabolite.id]:1,self.variables["nconcfit"][metabolite.id]:-1,self.variables["logconc"][metabolite.id]:1}, metabolite
                 )
-                objvars.append(1 * self.variables["pconcfit"][metabolite.id])
-                objvars.append(1 * self.variables["nconcfit"][metabolite.id])
+                objvars.append(self.variables["pconcfit"][metabolite.id])
+                objvars.append(self.variables["nconcfit"][metabolite.id])
+        self._set_min_objective(objvars)
+
+    def _set_min_objective(self, objvars):
+        # The coefficients are set on the objective rather than built into an
+        # expression: optlang cannot parse the sum of bare variables that
+        # `add([1 * var, ...])` collapses to when symengine backs it.
         self.model.objective = self.model.problem.Objective(
-            add(objvars), direction="min", sloppy=True
+            Zero, direction="min", sloppy=True
         )
-    
+        self.model.objective.set_linear_coefficients({var: 1 for var in objvars})
+
+
     def build_logconc_variable(self, object):
         msid = self.modelutl.metabolite_msid(object)
         if msid == "cpd00001":

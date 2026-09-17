@@ -87,7 +87,12 @@ def to_fasta(features: Iterable[MSFeature], filename, line_size=80, fn_header=No
     with open(filename, "w") as fh:
         for feature in features:
             if feature.seq:
-                h = f">{feature.id}{DEFAULT_SPLIT}{feature.description}\n"
+                # A feature without a description would otherwise get the header
+                # ">id None", and read back with the description "None"
+                if feature.description is None:
+                    h = f">{feature.id}\n"
+                else:
+                    h = f">{feature.id}{DEFAULT_SPLIT}{feature.description}\n"
                 if fn_header:
                     h = fn_header(feature)
                 fh.write(h)

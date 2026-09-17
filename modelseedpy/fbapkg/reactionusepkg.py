@@ -104,9 +104,7 @@ class ReactionUsePkg(BaseFBAPkg):
     def build_exclusion_constraint(self, flux_values=None):
         # Deferred import to avoid circular dependency
         from modelseedpy.core.fbahelper import FBAHelper
-        flux_values = flux_values or FBAHelper.compute_flux_values_from_variables(
-            self.model
-        )
+        flux_values = flux_values or self.modelutl.compute_flux_values_from_variables()
         count = len(self.constraints["exclusion"])
         solution_coef = {}
         solution_size = 0

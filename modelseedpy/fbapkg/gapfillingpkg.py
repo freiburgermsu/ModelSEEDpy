@@ -308,35 +308,7 @@ class GapfillingPkg(BaseFBAPkg):
                     None, minobjective
                 )
 
-    def get_model_index_hash(self):
-        """Determine all indices that should be gap filled"""
-        index_hash = {"none": 0}
-        for metabolite in self.model.metabolites:
-            if re.search('_[a-z]\d+$', metabolite.id) is not None:
-                m = re.search('_([a-z])(\d+)$', metabolite.id)
-                if m[1] != "e":
-                    if m[2] not in index_hash:
-                        index_hash[m[2]] = 0
-                    index_hash[m[2]] += 1
-            else:
-                index_hash["none":0]
-                # Iterating over all indecies with more than 10 intracellular compounds:
-        return index_hash
 
-    def get_model_index_hash(self):
-        """Determine all indices that should be gap filled"""
-        index_hash = {"none": 0}
-        for metabolite in self.model.metabolites:
-            if re.search('_[a-z]\d+$', metabolite.id) is not None:
-                m = re.search('_([a-z])(\d+)$', metabolite.id)
-                if m[1] != "e":
-                    if m[2] not in index_hash:
-                        index_hash[m[2]] = 0
-                    index_hash[m[2]] += 1
-            else:
-                index_hash["none":0]
-                # Iterating over all indecies with more than 10 intracellular compounds:
-        return index_hash
 
     def extend_model_with_model_for_gapfilling(self, source_model, index):
         self.new_metabolites, self.new_reactions, local_remap, new_penalties = {}, {}, {}, {}
@@ -436,7 +408,9 @@ class GapfillingPkg(BaseFBAPkg):
         for template_compound in template.compcompounds:
             compartment = template_compound.compartment
             compartment_index = "0" if compartment == 'e' else index
-            cobra_met = self.convert_template_compound(template_compound, compartment_index, template)  # TODO: move function out
+            # to_metabolite, not convert_template_compound: the latter splits the id
+            # on '_' and loses the second half of ids like glc__D_e
+            cobra_met = template_compound.to_metabolite(compartment_index)
             if cobra_met.id not in self.model.metabolites and cobra_met.id not in self.new_metabolites:
                 self.new_metabolites[cobra_met.id] = cobra_met
                 #self.model.add_metabolites([cobra_met])
@@ -605,7 +579,7 @@ class GapfillingPkg(BaseFBAPkg):
 
     def binary_check_gapfilling_solution(self, solution=None, flux_values=None):
         solution = solution or self.compute_gapfilled_solution(flux_values)
-        flux_values = flux_values or FBAHelper.compute_flux_values_from_variables(self.model)
+        flux_values = flux_values or self.modelutl.compute_flux_values_from_variables()
         rxn_filter = {rxn_id:solution["reversed"][rxn_id] for rxn_id in solution["reversed"]}
         rxn_filter.update({rxn_id:solution["new"][rxn_id] for rxn_id in solution["new"]})
         self.pkgmgr.getpkg("ReactionUsePkg").build_package(rxn_filter)

@@ -46,13 +46,21 @@ class KBaseMediaPkg(BaseFBAPkg):
         
         #First initializing all exchanges to default uptake and excretion
         for reaction in self.modelutl.exchange_list():
-            reaction.lower_bound = -self.parameters["default_uptake"]
-            reaction.upper_bound = self.parameters["default_excretion"]
+            # Set the bound that moves up first: assigning the lower bound to an
+            # exchange whose upper bound is still below it makes cobra raise
+            if -1 * self.parameters["default_uptake"] > reaction.upper_bound:
+                reaction.upper_bound = self.parameters["default_excretion"]
+                reaction.lower_bound = -1 * self.parameters["default_uptake"]
+            else:
+                reaction.lower_bound = -1 * self.parameters["default_uptake"]
+                reaction.upper_bound = self.parameters["default_excretion"]
 
         # Now constraining exchanges for specific compounds specified in the media
         if self.parameters["media"]:
             exchange_hash = self.modelutl.exchange_hash()
-            # self.modelutl.build_metabolite_hash()
+            # media compounds added to the model after the hash was built are
+            # left unconstrained without this
+            self.modelutl.build_metabolite_hash()
             for mediacpd in self.parameters["media"].mediacompounds:
                 mets = self.modelutl.find_met(mediacpd.id)
                 if len(mets) > 0:

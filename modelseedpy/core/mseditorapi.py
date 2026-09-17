@@ -123,7 +123,10 @@ class MSEquation:
         self.stoich = stoichiometry; self.direction = direction
         self.rxn_obj = Reaction(ID, name, subsystem, lb, ub)
         if gpr is not None:  self.rxn_obj.gene_reaction_rule = gpr
-        if not isinstance(list(stoichiometry.keys())[0], str):  self.rxn_obj.add_metabolites(stoichiometry)
+        # Only cobra Metabolite keys can be added to a reaction: the parser below
+        # returns (compound id, compartment) tuples, which cobra cannot take
+        if stoichiometry and isinstance(list(stoichiometry.keys())[0], Metabolite):
+            self.rxn_obj.add_metabolites(stoichiometry)
 
     @staticmethod
     def _get_coef(lst, return_dict, side, default_group):
@@ -140,7 +143,9 @@ class MSEquation:
                     position += 1
                 coeficient = side * float(number)
                 reagent = reagent[position+1: ]
-            elif '[' in reagent and ']' in reagent:
+            # a separate test, not an elif: a reagent can carry both a
+            # coefficient and a compartment, e.g. (2)cpd00003[e]
+            if '[' in reagent and ']' in reagent:
                 s = ''
                 position = -2
                 while reagent[position] != '[':

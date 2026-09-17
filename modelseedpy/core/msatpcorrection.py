@@ -116,10 +116,15 @@ class MSATPCorrection:
             self.atp_hydrolysis = output["reaction"]
 
         self.media_hash = {}
-        self.atp_medias = []
+        # The medias passed in are kept: they used to be dropped, so a caller
+        # that supplied its own medias and load_default_medias=False evaluated
+        # none at all
+        self.atp_medias = list(atp_medias)
 
         if load_default_medias:
             self.load_default_medias(default_media_path)
+
+        self.index_medias()
 
         self.forced_media = []
         for media_id in forced_media:
@@ -185,6 +190,9 @@ class MSATPCorrection:
                 media.name = media_id
                 self.atp_medias.append([media, min_gap.get(media_id, 0.01)])
         
+    def index_medias(self):
+        """Normalize every media to a [media, minimum objective] pair and hash
+        them by id. Run for the medias passed in as well as the default ones."""
         media_ids = set()
         temp_medias = self.atp_medias
         self.atp_medias = []
