@@ -10,24 +10,56 @@ from numpy import log as ln
 from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 from modelseedpy.core.fbahelper import FBAHelper
 
+UNKNOWN_DELTAG = 1e6  # ModelSEED stores 10000000 for an unknown formation energy
+
 # Base class for FBA packages
 class FullThermoPkg(BaseFBAPkg):
     @staticmethod
-    def default_concentrations():
+    def default_concentration():
         return {
-            "cpd00067_c0":[0.0000001,0.0000001],      #M H+ - equivalent to pHint = 7
-            "cpd00007_c0":[1E-07,8.2E-06],            #M O2 instracellular
-            "cpd00011_c0":[1E-08,0.0014],             #M CO2 instracellular
-            "cpd00067_e0":[3.16228E-08,3.16228E-07],  #M H+ - equivalent to pHext = 6.5
-            "cpd00009_e0":[0.056,0.056],              #Extracellular phosphate - overridden by media when media concentration is given
-            "cpd00048_e0":[0.0030,0.0030],            #Extracellular sulfate - overridden by media when media concentration is given
-            "cpd00013_e0":[0.019,0.019],              #Extracellular ammonia - overridden by media when media concentration is given
-            "cpd00971_e0":[0.16,0.16],                #Extracellular sodium - overridden by media when media concentration is given
-            "cpd00205_e0":[0.022,0.022],              #Extracellular potassium - overridden by media when media concentration is given
-            "cpd10515_e0":[0.062,0.062],              #Extracellular Fe2+ - overridden by media when media concentration is given
-            "cpd00011_e0":[0.00010,0.00010],          #Extracellular CO2 - overridden by media when media concentration is given
-            "cpd00007_e0":[8.2E-06,8.2E-06],          #Extracellular O2 - overridden by media when media concentration is given
-            "cpd00027_e0":[0.020,0.020]               #Extracellular glucose - overridden by media when media concentration is given
+            "cpd00067_c0": [0.0000001, 0.0000001],  # M H+ - equivalent to pHint = 7
+            "cpd00007_c0": [1e-07, 8.2e-06],  # M O2 instracellular
+            "cpd00011_c0": [1e-08, 0.0014],  # M CO2 instracellular
+            "cpd00067_e0": [
+                3.16228e-08,
+                3.16228e-07,
+            ],  # M H+ - equivalent to pHext = 6.5
+            "cpd00009_e0": [
+                0.056,
+                0.056,
+            ],  # Extracellular phosphate - overridden by media when media concentration is given
+            "cpd00048_e0": [
+                0.0030,
+                0.0030,
+            ],  # Extracellular sulfate - overridden by media when media concentration is given
+            "cpd00013_e0": [
+                0.019,
+                0.019,
+            ],  # Extracellular ammonia - overridden by media when media concentration is given
+            "cpd00971_e0": [
+                0.16,
+                0.16,
+            ],  # Extracellular sodium - overridden by media when media concentration is given
+            "cpd00205_e0": [
+                0.022,
+                0.022,
+            ],  # Extracellular potassium - overridden by media when media concentration is given
+            "cpd10515_e0": [
+                0.062,
+                0.062,
+            ],  # Extracellular Fe2+ - overridden by media when media concentration is given
+            "cpd00011_e0": [
+                0.00010,
+                0.00010,
+            ],  # Extracellular CO2 - overridden by media when media concentration is given
+            "cpd00007_e0": [
+                8.2e-06,
+                8.2e-06,
+            ],  # Extracellular O2 - overridden by media when media concentration is given
+            "cpd00027_e0": [
+                0.020,
+                0.020,
+            ],  # Extracellular glucose - overridden by media when media concentration is given
         }
 
     def __init__(self, model):
@@ -40,16 +72,7 @@ class FullThermoPkg(BaseFBAPkg):
         )
         self.pkgmgr.addpkgs(["SimpleThermoPkg"])
 
-    def build_package(self,
-                      parameters: dict,      # simulation parameters
-                      verbose: bool = True
-                      ):
-        # define hard-coded defaults
-        self.parameters["deltaG_error"] = FullThermoPkg.default_deltaG_error()
-        self.parameters["compartment_potential"] = FullThermoPkg.default_compartment_potentials()
-        self.parameters["concentrations"] = FullThermoPkg.default_concentrations()
-
-        # amalgamate default and specified paramters 
+    def build_package(self, parameters, verbose=True):
         self.validate_parameters(
             parameters,
             [],
@@ -98,7 +121,6 @@ class FullThermoPkg(BaseFBAPkg):
                 if msid not in msid_hash:
                     msid_hash[msid] = {}
                 msid_hash[msid][metabolite.id] = metabolite
-            
             # Build concentration variable
             self.build_logconc_variable(metabolite)
             # Build error variable
@@ -201,13 +223,21 @@ class FullThermoPkg(BaseFBAPkg):
                 biochem_db =  ModelSEEDBiochem.get(path=self.parameters["modelseed_db_path"])
             else:
                 biochem_db =  ModelSEEDBiochem.get()
-            mscpd = biochem_db.compounds.get_by_id(msid)
+            mscpd = None
+            if msid in biochem_db.compounds:
+                mscpd = biochem_db.compounds.get_by_id(msid)
             if mscpd is not None:
                 if hasattr(mscpd, 'deltag') and mscpd.deltag is not None:
                     deltag = mscpd.deltag
-                elif hasattr(compound, 'delta_g') and compound.delta_g is not None:
+                elif hasattr(mscpd, 'delta_g') and mscpd.delta_g is not None:
                     deltag= mscpd.delta_g
         RValue = 0.008314 # kJ/mol/K
+        if deltag is not None and abs(deltag) >= UNKNOWN_DELTAG:
+            # ModelSEED marks an unknown formation energy with 10000000 rather
+            # than a null. Taken literally it puts the compound's potential far
+            # outside the bounds of SimpleThermoPkg and the model is infeasible,
+            # so it is treated as no data: the potential stays free.
+            deltag = None
         if deltag is None:
             return None
         if msid == "cpd00067": #Adding pH7 concentration to deltaG so H+ concentration cancels unless it's different from pH7
@@ -218,7 +248,12 @@ class FullThermoPkg(BaseFBAPkg):
             compartment_potential = self.parameters["compartment_potential"][
                 object.compartment
             ]
-        constant = deltag * 4.184 + object.charge * Faraday * compartment_potential
+        # kC/mol * mV = J/mol, so the electrical term is divided by 1000 to reach
+        # the kJ/mol of the other terms
+        constant = (
+            deltag * 4.184
+            + object.charge * Faraday * compartment_potential / 1000
+        )
         coef = {
             potential_variable: 1,
             pos_deltagerr_variable: -1,
