@@ -13,7 +13,8 @@ class DrainFluxPkg(BaseFBAPkg):
     def __init__(self, model):
         BaseFBAPkg.__init__(self, model, "drain flux", {}, {"drain"})
         self.update_drain_fluxes()
-        
+
+    def build_package(self, parameters):
         self.validate_parameters(
             parameters,
             [],

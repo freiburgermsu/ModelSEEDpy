@@ -42,7 +42,7 @@ class MSProbability:
         
     # TODO - add the parallelization code with an argument flag
     @staticmethod
-    def megaModel(clades_paths, kbase_api=None, reaction_counts_path=None, numTotal="numMembers"):
+    def megaModel(clades_paths, kbase_api=None, reaction_counts_path=None, numTotal="numMembers", copy_genes=True):
         # compute the reaction frequency of the models in a given clade
         broken_models, megaModels = [], []
         # models_paths = glob(f"{models_path}/*.xml")
@@ -75,6 +75,7 @@ class MSProbability:
             # megaModel = CobraModelConverter(Model(clade, name=f"MegaModel for {clade} from {reaction_counts[numTotal]} members")).build()
             remaining_rxnIDs = set(list(reaction_counts.keys()))
             captured_reactions, captured_rxnIDs = [], set()
+            found_rxn_hash = {}
             print("\n", clade)#, end="\t")
             for model_path in paths:
                 print(f"{model_path}\t\t\t\t\t\t\t\t\t\t\t\t", end="\r")

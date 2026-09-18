@@ -1,4 +1,6 @@
-from modelseedpy.core.optlanghelper import OptlangHelper, Bounds, tupVariable, tupConstraint, tupObjective
+# the optlanghelper package, not modelseedpy.core.optlanghelper, which was removed
+from optlanghelper import OptlangHelper, Bounds, tupVariable, tupConstraint, tupObjective
+from math import isclose
 from modelseedpy.core.exceptions import FeasibilityError, ObjectAlreadyDefinedError
 from modelseedpy.biochem import from_local
 from collections import Counter

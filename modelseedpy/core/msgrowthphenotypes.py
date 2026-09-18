@@ -229,7 +229,8 @@ class MSGrowthPhenotype:
             "gapfill_count_with_genes":0,
             "reaction_count":0,
             "fluxes":None,
-            "objective_string":self.objective.to_string()
+            "objective_string":self.objective.to_string(),
+            "baseline_objective":None
         }
         #Translating model is not MSModelUtil
         modelutl = model_or_mdlutl
@@ -246,9 +247,10 @@ class MSGrowthPhenotype:
             target_mdlutl = msgapfill.gfmodelutl
         
         # Getting basline growth
+        objstring = output["objective_string"]
         if objstring != None and output["baseline_objective"] == None and self.parent:
             output["baseline_objective"] = self.parent.baseline_objective(modelutl, objstring)
-        if output["baseline_objective"] < 1e-5:
+        if not output["baseline_objective"] or output["baseline_objective"] < 1e-5:
             output["baseline_objective"] = 0.01
 
         # Building specific media and setting compound exception list
