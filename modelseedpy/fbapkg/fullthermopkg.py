@@ -101,6 +101,9 @@ class FullThermoPkg(BaseFBAPkg):
                 # the integrality tolerance moves; it only has to exceed the
                 # largest potential the model can reach.
                 "max_potential": 10000,  # KJ/mol
+                # take each compound's error bound from the database's own
+                # estimate where it is larger than default_max_error
+                "use_database_error": True,
             },
         )
         simple_thermo_parameters = {
@@ -196,6 +199,18 @@ class FullThermoPkg(BaseFBAPkg):
     def build_dgerr_variables(self, object):
         msid = self.modelutl.metabolite_msid(object)
         ub = self.parameters["default_max_error"]
+        if self.parameters["use_database_error"]:
+            # The database estimates an error per compound and sometimes states a
+            # very large one to mark an estimate it does not stand behind -- the
+            # eQuilibrator energy of cpd08301 is 27.8 +- 23901 kJ/mol. Held to the
+            # flat default instead, such a compound constrains its reactions as
+            # tightly as a well determined one, and the only way to admit the
+            # reactions it blocks is to loosen every compound in the model. The
+            # larger of the two is taken, so no compound is held tighter than the
+            # default.
+            reported = self.database_error(msid)
+            if reported is not None:
+                ub = max(ub, reported)
         if msid in self.parameters["custom_deltaG_error"]:
             ub = self.parameters["custom_deltaG_error"][msid]
         elif object.id in self.parameters["custom_deltaG_error"]:
@@ -207,6 +222,22 @@ class FullThermoPkg(BaseFBAPkg):
             "ndgerr", 0, ub, "continuous", object
         )
     
+    def database_error(self, msid):
+        """The error the database reports for a compound's formation energy."""
+        if msid is None:
+            return None
+        from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+        if self.parameters["modelseed_db_path"] is not None:
+            biochem_db = ModelSEEDBiochem.get(path=self.parameters["modelseed_db_path"])
+        else:
+            biochem_db = ModelSEEDBiochem.get()
+        if msid not in biochem_db.compounds:
+            return None
+        error = getattr(biochem_db.compounds.get_by_id(msid), "delta_g_error", None)
+        if error is None or abs(error) >= UNKNOWN_DELTAG:
+            return None
+        return abs(error)
+
     def build_concfit_variables(self, object):
         self.build_variable(
             "pconcfit", 0, 100, "continuous", object
