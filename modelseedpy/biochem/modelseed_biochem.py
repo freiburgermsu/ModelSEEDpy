@@ -218,6 +218,49 @@ def _load_aliases_df(df_aliases, seed_index=1, source_index=3, alias_id_index=2)
     return aliases
 
 
+# The 2026-09-11 reorganization of the ModelSEEDDatabase moved the formation
+# energies and the pKas out of the top-level `deltag`/`deltagerr`/`pka`/`pkb`
+# fields (and out of the compound TSVs) and into per-source blocks:
+#
+#   "thermodynamics": {"eQuilibrator": [value, error], "Group contribution": [...]}
+#   "pkas": {"Marvin": {"kind": ..., "pKa": "1:1.80;1:6.95", "pKb": ""}}
+#
+# The retired top-level energy was a mixture of those sources -- of the records
+# that carried one, some match Group contribution exactly, a few eQuilibrator,
+# and most match none of them -- so it cannot be reproduced, and a source is
+# chosen here instead. eQuilibrator and dGPredictor are already transformed to
+# pH 7, which is the convention FullThermoPkg assumes; Group contribution is
+# not, so it is not used as a silent fallback. Set DELTA_G_SOURCES to change
+# the order, and read `delta_g_source` on a compound to see which one it got.
+DELTA_G_SOURCES = ("eQuilibrator", "dGPredictor")
+PKA_SOURCES = ("Marvin", "Literature", "MolGpKa")
+
+
+def _thermodynamics(record):
+    """(delta_g, delta_g_error, source) of a compound record, old schema or new."""
+    if record.get("deltag") is not None:
+        return record.get("deltag"), record.get("deltagerr"), "deltag"
+    block = record.get("thermodynamics") or {}
+    for source in DELTA_G_SOURCES:
+        values = block.get(source)
+        if values:
+            error = values[1] if len(values) > 1 else None
+            return values[0], error, source
+    return None, None, None
+
+
+def _pkas(record):
+    """(pKa, pKb) strings of a compound record, old schema or new."""
+    if record.get("pka") is not None or record.get("pkb") is not None:
+        return record.get("pka"), record.get("pkb")
+    block = record.get("pkas") or {}
+    for source in PKA_SOURCES:
+        entry = block.get(source)
+        if entry and (entry.get("pKa") or entry.get("pKb")):
+            return entry.get("pKa") or None, entry.get("pKb") or None
+    return None, None
+
+
 def _load_metabolites(
     database_path: str, aliases=None, names=None, structures=None
 ) -> dict:
@@ -238,6 +281,8 @@ def _load_metabolites(
                         cpd_names = set()
                         if o["id"] in names:
                             cpd_names |= names[o["id"]]
+                        delta_g, delta_g_error, delta_g_source = _thermodynamics(o)
+                        pka, pkb = _pkas(o)
                         cpd = ModelSEEDCompound2(
                             o["id"],
                             o.get("formula"),
@@ -247,16 +292,17 @@ def _load_metabolites(
                             o.get("abbreviation"),
                             cpd_names,
                             o.get("mass"),
-                            o.get("deltag"),
-                            o.get("deltagerr"),
+                            delta_g,
+                            delta_g_error,
                             o.get("is_core"),
                             o.get("is_obsolete"),
                             None,
-                            o.get("pka"),
-                            o.get("pkb"),
+                            pka,
+                            pkb,
                             o.get("source"),
                             pathways=o.get('pathways')
                         )
+                        cpd.delta_g_source = delta_g_source
                         if cpd.id in aliases:
                             cpd.annotation.update(aliases[cpd.id])
                         if cpd.id in structures:
