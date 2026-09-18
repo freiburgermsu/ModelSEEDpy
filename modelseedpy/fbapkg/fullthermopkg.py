@@ -93,13 +93,20 @@ class FullThermoPkg(BaseFBAPkg):
                 "modelseed_db_path": None,
                 "exclude_reactions": [],
                 "set_min_error_objective": False,
-                "set_concfit_objective": False
+                "set_concfit_objective": False,
+                # The bound on a compound's chemical potential, which is also the
+                # big-M of the direction rows of SimpleThermoPkg. At the old
+                # 100000 those rows are badly scaled against the kJ/mol of the
+                # energies, and the solver returns different "optimal" answers as
+                # the integrality tolerance moves; it only has to exceed the
+                # largest potential the model can reach.
+                "max_potential": 10000,  # KJ/mol
             },
         )
         simple_thermo_parameters = {
             "filter": self.parameters["filter"],
-            "min_potential": -100000,  # KJ/mol
-            "max_potential": 100000,  # KJ/mol
+            "min_potential": -self.parameters["max_potential"],
+            "max_potential": self.parameters["max_potential"],
             "dgbin": self.parameters["dgbin"],
             "exclude_reactions": self.parameters["exclude_reactions"]
         }
