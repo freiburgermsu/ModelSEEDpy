@@ -116,7 +116,8 @@ class FullThermoPkg(BaseFBAPkg):
                 # "tmfa": the margin applies only to reactions that carry flux, so a reaction
                 # whose pinned dG cannot leave (-dg_margin, dg_margin) is idle rather than
                 # making the model infeasible. "revbin" applies it to every reaction (loopless
-                # FBA). See SimpleThermoPkg.
+                # FBA). SimpleThermoPkg on its own defaults to "revbin". Either way a reaction
+                # whose dG cannot fit within +/-max_potential (large polymers) is infeasible.
                 "coupling": "tmfa",
                 # take each compound's error bound from the database's own
                 # estimate where it is larger than default_max_error

@@ -40,15 +40,25 @@ class SimpleThermoPkg(BaseFBAPkg):
               of them on: zf = 1 forces dgp <= -eps, zr = 1 forces dgp >= +eps, and with both
               off the reaction carries no flux and its dgp is unconstrained. The margin applies
               only to reactions that carry flux (TMFA, Henry, Broadbelt & Hatzimanikatis 2007).
-              It excludes the same cycles and cannot be made infeasible by an idle reaction.
+              It excludes the same cycles, and an idle reaction whose dG cannot leave (-eps, eps)
+              does not make the model infeasible. Every dgp is still bounded by max_potential,
+              though, so a reaction whose attainable dG lies beyond +/-max_potential makes the
+              model infeasible under either coupling (e.g. teichoic acid synthesis with 30
+              UDP-sugars, when potentials are pinned).
 
     Both big-M terms must stay above what the solver can resolve. A binary is accepted as
     integral within the solver's integrality tolerance tau, so the dgp side can slip by
     tau * (max_potential + eps), which must stay well below eps. The package warns when the slip
     reaches a tenth of eps: with max_potential 10000 and eps 1 that is tau >= 1e-5, which is
-    Gurobi's own default; cobra sets 1e-7, a slip of 0.001. The flux side can carry up to
-    tau * big-M through an "off" direction; tighten tau or use the solver's integrality-focus
-    setting if that matters.
+    Gurobi's own default; cobra sets 1e-7, a slip of 0.001. On the flux side an "off" direction
+    can still carry tau * big-M -- big-M is RevBinPkg's fixed 1000 under "revbin" and the
+    reaction's largest bound under "tmfa" -- so a loop can trickle through nominally off
+    binaries, each leg uphill. The package warns when that reaches 0.01; tighten tau or set the
+    solver's IntegralityFocus if it matters. Proving that no loop exists is slow: objectives
+    that maximise loop flux need a time limit.
+
+    Defaults differ: this package uses "revbin"; FullThermoPkg, which pins potentials, uses
+    "tmfa".
 
     Build after the final reaction bounds are set. "tmfa" reads them at build time: it gives a
     direction a binary only if the bounds allow flux that way, and caps that flux at the big-M.
@@ -235,3 +245,17 @@ class SimpleThermoPkg(BaseFBAPkg):
                 f"SimpleThermoPkg: integrality tolerance {tau:g} lets dgp slip by {slip:g}, "
                 f"not small against dg_margin {eps:g}; tighten the tolerance or lower "
                 f"max_potential")
+        if self.parameters["coupling"] == "revbin":
+            big = 1000.0                      # RevBinPkg's fixed flux big-M
+        else:
+            big = self.parameters["flux_big_m"]
+            if big is None:
+                big = max((max(abs(r.lower_bound), abs(r.upper_bound))
+                           for r in self.model.reactions
+                           if r.id in self.variables["zf"] or r.id in self.variables["zr"]),
+                          default=0.0)
+        if tau * big >= 0.01:
+            logger.warning(
+                f"SimpleThermoPkg: integrality tolerance {tau:g} lets an 'off' direction carry "
+                f"up to {tau * big:g} flux (big-M {big:g}); a loop can trickle through it. "
+                f"Tighten the tolerance or set IntegralityFocus")
