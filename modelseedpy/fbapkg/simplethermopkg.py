@@ -64,8 +64,11 @@ class SimpleThermoPkg(BaseFBAPkg):
     direction a binary only if the bounds allow flux that way, and caps that flux at the big-M.
     A reaction blocked at build and reopened later has no thermo rows in that direction, and a
     bound widened later is capped at the old one. "revbin" relies on RevBinPkg, whose flux big-M
-    is a fixed 1000. Building again replaces the coupling rows, so a rebuild with another
-    coupling, margin or filter does not leave the previous one's rows behind.
+    is a fixed 1000. Building again replaces this package's coupling rows, so a rebuild with
+    another coupling, margin or filter does not leave the previous one's thermo rows behind.
+    RevBinPkg's own rows (one direction at a time, flux capped at 1000) stay after a switch from
+    "revbin" to "tmfa": RevBinPkg may be shared with other packages on the model, so this
+    package does not remove them.
 
     Parameters (build_package):
         dg_margin      eps, in the units of the potentials -- kJ/mol under FullThermoPkg,
@@ -145,7 +148,7 @@ class SimpleThermoPkg(BaseFBAPkg):
     def clear_coupling(self):
         """Remove the coupling rows and binaries of an earlier build, of either coupling. The
         potentials and dgp variables are kept: build_variable reuses them, and other packages
-        (FullThermoPkg) hold rows on the potentials."""
+        (FullThermoPkg) hold rows on the potentials. RevBinPkg's own rows are left alone."""
         objs = []
         for kind in ("thermo", "thermof", "thermor", "zfc", "zrc", "zexcl"):
             objs.extend(self.constraints[kind].values())
