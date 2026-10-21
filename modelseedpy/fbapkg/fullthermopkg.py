@@ -11,6 +11,12 @@ from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 from modelseedpy.core.fbahelper import FBAHelper
 
 UNKNOWN_DELTAG = 1e6  # ModelSEED stores 10000000 for an unknown formation energy
+NO_ESTIMATE_ERROR = 1000.0  # kcal/mol: eQuilibrator's "no estimate" marker (see modelseed_biochem)
+# Units. The database (and a metabolite's notes['deltag']) give formation energies and their
+# errors in kcal/mol. Everything inside this package -- potentials, dgp, the error variables,
+# default_max_error, custom_deltaG_error, max_potential, dg_margin -- is kJ/mol. Every value read
+# from the database is converted with KCAL_TO_KJ on the way in.
+KCAL_TO_KJ = 4.184
 
 # Base class for FBA packages
 class FullThermoPkg(BaseFBAPkg):
@@ -79,7 +85,7 @@ class FullThermoPkg(BaseFBAPkg):
             {
                 "default_max_conc": 0.02,  # M
                 "default_min_conc": 0.000001,  # M
-                "default_max_error": 5,  # KJ/mol
+                "default_max_error": 5,  # kJ/mol
                 "custom_concentrations": {},
                 "custom_deltaG_error": {"cpd00067": 0},
                 "compartment_potential": {
@@ -100,7 +106,17 @@ class FullThermoPkg(BaseFBAPkg):
                 # energies, and the solver returns different "optimal" answers as
                 # the integrality tolerance moves; it only has to exceed the
                 # largest potential the model can reach.
-                "max_potential": 10000,  # KJ/mol
+                "max_potential": 10000,  # kJ/mol
+                # the loop-law margin, kJ/mol: a reaction carrying flux must be at least this
+                # far below equilibrium. 0 makes the direction rows vacuous -- all-zero
+                # potentials satisfy them -- so near-equilibrium internal cycles are not
+                # excluded (see SimpleThermoPkg).
+                "dg_margin": 1.0,
+                # "tmfa": the margin applies only to reactions that carry flux, so a reaction
+                # whose pinned dG cannot leave (-dg_margin, dg_margin) is idle rather than
+                # making the model infeasible. "revbin" applies it to every reaction (loopless
+                # FBA). See SimpleThermoPkg.
+                "coupling": "tmfa",
                 # take each compound's error bound from the database's own
                 # estimate where it is larger than default_max_error
                 "use_database_error": True,
@@ -108,6 +124,8 @@ class FullThermoPkg(BaseFBAPkg):
         )
         simple_thermo_parameters = {
             "filter": self.parameters["filter"],
+            "dg_margin": self.parameters["dg_margin"],
+            "coupling": self.parameters["coupling"],
             "min_potential": -self.parameters["max_potential"],
             "max_potential": self.parameters["max_potential"],
             "dgbin": self.parameters["dgbin"],
@@ -200,14 +218,14 @@ class FullThermoPkg(BaseFBAPkg):
         msid = self.modelutl.metabolite_msid(object)
         ub = self.parameters["default_max_error"]
         if self.parameters["use_database_error"]:
-            # The database estimates an error per compound and sometimes states a
-            # very large one to mark an estimate it does not stand behind -- the
-            # eQuilibrator energy of cpd08301 is 27.8 +- 23901 kJ/mol. Held to the
-            # flat default instead, such a compound constrains its reactions as
-            # tightly as a well determined one, and the only way to admit the
-            # reactions it blocks is to loosen every compound in the model. The
-            # larger of the two is taken, so no compound is held tighter than the
-            # default.
+            # The database's error for each compound's estimate, converted to kJ/mol.
+            # The larger of it and the flat default is taken, so no compound is held
+            # tighter than the default and a poorly determined one is not held as
+            # tightly as a well determined one. (This was compared and applied in
+            # kcal/mol until it was converted, holding every such compound 4.184x too
+            # tightly.) eQuilibrator's "no estimate" marker -- 12,482 to 23,901
+            # kcal/mol, e.g. cpd08301 27.8 +/- 23,901 kcal/mol -- is not an error
+            # bound; the loader skips such entries for the next source.
             reported = self.database_error(msid)
             if reported is not None:
                 ub = max(ub, reported)
@@ -234,9 +252,9 @@ class FullThermoPkg(BaseFBAPkg):
         if msid not in biochem_db.compounds:
             return None
         error = getattr(biochem_db.compounds.get_by_id(msid), "delta_g_error", None)
-        if error is None or abs(error) >= UNKNOWN_DELTAG:
+        if error is None or abs(error) >= NO_ESTIMATE_ERROR:
             return None
-        return abs(error)
+        return abs(error) * KCAL_TO_KJ        # kcal/mol in the database, kJ/mol here
 
     def build_concfit_variables(self, object):
         self.build_variable(
@@ -249,7 +267,7 @@ class FullThermoPkg(BaseFBAPkg):
     def build_gibbs_constraint(self, object):
         msid = self.modelutl.metabolite_msid(object)
         
-        # potential(i) (KJ/mol) = deltaG(i) (KJ/mol) + R * T(K) * lnconc(i) + charge(i) * compartment_potential
+        # potential(i) (kJ/mol) = deltaG(i) (kJ/mol) + R * T(K) * lnconc(i) + charge(i) * compartment_potential
         if object.id not in self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"]:
             return None
         
@@ -284,8 +302,10 @@ class FullThermoPkg(BaseFBAPkg):
             deltag = None
         if deltag is None:
             return None
-        if msid == "cpd00067": #Adding pH7 concentration to deltaG so H+ concentration cancels unless it's different from pH7
-            deltag += -1 * RValue * self.parameters["temperature"] * np.log(0.0000001)/4.184 #Dividing by 4.184 here because we multiply by this value later
+        if msid == "cpd00067":
+            # pH-7-transformed energies: add RT ln(1e-7) back for H+ so its concentration term
+            # cancels at pH 7. RT is kJ/mol and deltag is still kcal/mol here, hence the division.
+            deltag += -1 * RValue * self.parameters["temperature"] * np.log(0.0000001) / KCAL_TO_KJ
         Faraday = 96.485 # kC/mol
         compartment_potential = 0
         if object.compartment in self.parameters["compartment_potential"]:
@@ -295,7 +315,7 @@ class FullThermoPkg(BaseFBAPkg):
         # kC/mol * mV = J/mol, so the electrical term is divided by 1000 to reach
         # the kJ/mol of the other terms
         constant = (
-            deltag * 4.184
+            deltag * KCAL_TO_KJ
             + object.charge * Faraday * compartment_potential / 1000
         )
         coef = {

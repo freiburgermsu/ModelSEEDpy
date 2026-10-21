@@ -235,17 +235,41 @@ def _load_aliases_df(df_aliases, seed_index=1, source_index=3, alias_id_index=2)
 DELTA_G_SOURCES = ("eQuilibrator", "dGPredictor")
 PKA_SOURCES = ("Marvin", "Literature", "MolGpKa")
 
+# Units: every energy and error in these blocks is in kcal/mol (transformed to pH 7 for
+# eQuilibrator and dGPredictor). FullThermoPkg converts both to kJ/mol.
+#
+# Two "no estimate" markers have to be recognized, and they are in different units:
+#   - ModelSEED's own, 10000000, stored as the energy and the error (UNKNOWN_DELTAG).
+#   - eQuilibrator's. When it cannot estimate a compound it reports an uncertainty of order
+#     1e5 kJ/mol, which the database stores converted to kcal/mol: 12,482 to 23,901 for 9,457
+#     compounds (SAM: 132.52 +/- 23,901.43). The largest genuine error in the database is
+#     38.5 kcal/mol, so nothing lies between the two populations, and NO_ESTIMATE_ERROR sits in
+#     that gap. Taken at face value the marker made SAM's 132.52 an "estimate" with an error
+#     wider than any bound in the model, and it was picked over dGPredictor's 67.83 +/- 8.41.
+# An entry carrying either marker is skipped and the next source in DELTA_G_SOURCES is used.
+UNKNOWN_DELTAG = 1e6          # kcal/mol; ModelSEED stores 10000000
+NO_ESTIMATE_ERROR = 1000.0    # kcal/mol; eQuilibrator's marker is >= 12,482
+
 
 def _thermodynamics(record):
-    """(delta_g, delta_g_error, source) of a compound record, old schema or new."""
+    """(delta_g, delta_g_error, source) of a compound record, old schema or new.
+
+    Values are kcal/mol. A source whose entry is a "no estimate" marker is skipped in favour of
+    the next one (see NO_ESTIMATE_ERROR).
+    """
     if record.get("deltag") is not None:
         return record.get("deltag"), record.get("deltagerr"), "deltag"
     block = record.get("thermodynamics") or {}
     for source in DELTA_G_SOURCES:
         values = block.get(source)
-        if values:
-            error = values[1] if len(values) > 1 else None
-            return values[0], error, source
+        if not values or values[0] is None:
+            continue
+        error = values[1] if len(values) > 1 else None
+        if abs(values[0]) >= UNKNOWN_DELTAG:
+            continue
+        if error is not None and abs(error) >= NO_ESTIMATE_ERROR:
+            continue
+        return values[0], error, source
     return None, None, None
 
 
