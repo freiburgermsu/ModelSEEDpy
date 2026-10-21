@@ -106,3 +106,22 @@ def test_all_elements_and_charge_rows():
     m = _toy()
     info = _close(m, elements="all", charge=True)
     assert set(info["rows"]) == {"C", "O", "charge"}
+
+
+def test_closure_terms_match_built_rows():
+    # closure_terms() returns exactly what build_package() turns into constraints
+    m = _toy()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    terms = pkg.closure_terms({})
+    pkg2 = MSPackageManager.get_pkg_mgr(_toy()).getpkg("ElementClosurePkg")
+    pkg2.build_package({})
+    assert terms == pkg2.terms
+    for key, row in terms.items():
+        con = pkg2.constraints["closure"][key]
+        lin = con.get_linear_coefficients(
+            [v for rid in row for v in (pkg2.model.reactions.get_by_id(rid).forward_variable,
+                                        pkg2.model.reactions.get_by_id(rid).reverse_variable)])
+        for rid, c in row.items():
+            r = pkg2.model.reactions.get_by_id(rid)
+            assert lin[r.forward_variable] == pytest.approx(c)
+            assert lin[r.reverse_variable] == pytest.approx(-c)

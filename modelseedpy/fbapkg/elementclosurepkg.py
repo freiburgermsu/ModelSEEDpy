@@ -188,6 +188,25 @@ class ElementClosurePkg(BaseFBAPkg):
 
     # ------------------------------------------------------------------ constraints ----------
     def build_package(self, parameters=None):
+        terms = self.closure_terms(parameters)
+        p = self.parameters
+        for key, row in terms.items():
+            coef = {}
+            for rid, c in row.items():
+                r = self.model.reactions.get_by_id(rid)
+                coef[r.forward_variable] = coef.get(r.forward_variable, 0.0) + c
+                coef[r.reverse_variable] = coef.get(r.reverse_variable, 0.0) - c
+            self.build_constraint("closure", 0 if p["sense"] == "eq" else None, 0, coef, key)
+        return self.summary()
+
+    def closure_terms(self, parameters=None):
+        """The closure rows without building them: {element: {reaction id: coefficient}}, each
+        row reading sum(coefficient * net flux) <= 0 (== 0 with sense "eq").
+
+        For solvers driven outside optlang -- e.g. a model too large to load into an optlang
+        interface, solved from its stoichiometric matrix -- add these rows directly.
+        build_package builds exactly these.
+        """
         self.validate_parameters(
             parameters or {},
             [],
@@ -231,23 +250,20 @@ class ElementClosurePkg(BaseFBAPkg):
                 raise ValueError(f"exempt reaction {rid} has metabolites without a formula: {bad}")
             exempt_rxns.append(r)
             logger.info(f"ElementClosurePkg: {rid} exempt ({why})")
+        out = {}
         for key in keys:
-            coef, terms = {}, {}
+            terms = {}
             for r in rows:
                 b = self.imbalance(r, key)
                 if abs(b) > 1e-12:
-                    coef[r.forward_variable] = coef.get(r.forward_variable, 0.0) - b
-                    coef[r.reverse_variable] = coef.get(r.reverse_variable, 0.0) + b
                     terms[r.id] = -b
             for r in exempt_rxns:             # allow this reaction's own creation of `key`
                 b = self.imbalance(r, key)
                 if abs(b) > 1e-12:
-                    coef[r.forward_variable] = coef.get(r.forward_variable, 0.0) - b
-                    coef[r.reverse_variable] = coef.get(r.reverse_variable, 0.0) + b
                     terms[r.id] = terms.get(r.id, 0.0) - b
             self.terms[key] = terms
-            self.build_constraint("closure", 0 if p["sense"] == "eq" else None, 0, coef, key)
-        return self.summary()
+            out[key] = dict(terms)
+        return out
 
     # ------------------------------------------------------------------ reporting ------------
     def summary(self):
