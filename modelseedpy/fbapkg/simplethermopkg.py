@@ -44,10 +44,18 @@ class SimpleThermoPkg(BaseFBAPkg):
 
     Both big-M terms must stay above what the solver can resolve. A binary is accepted as
     integral within the solver's integrality tolerance tau, so the dgp side can slip by
-    tau * (max_potential + eps), which must stay well below eps (max_potential 10000 and eps 1
-    need tau < 1e-4; Gurobi's default is 1e-5). The flux side can carry up to tau * big-M
-    through an "off" direction; tighten tau or use the solver's integrality-focus setting if
-    that matters.
+    tau * (max_potential + eps), which must stay well below eps. The package warns when the slip
+    reaches a tenth of eps: with max_potential 10000 and eps 1 that is tau >= 1e-5, which is
+    Gurobi's own default; cobra sets 1e-7, a slip of 0.001. The flux side can carry up to
+    tau * big-M through an "off" direction; tighten tau or use the solver's integrality-focus
+    setting if that matters.
+
+    Build after the final reaction bounds are set. "tmfa" reads them at build time: it gives a
+    direction a binary only if the bounds allow flux that way, and caps that flux at the big-M.
+    A reaction blocked at build and reopened later has no thermo rows in that direction, and a
+    bound widened later is capped at the old one. "revbin" relies on RevBinPkg, whose flux big-M
+    is a fixed 1000. Building again replaces the coupling rows, so a rebuild with another
+    coupling, margin or filter does not leave the previous one's rows behind.
 
     Parameters (build_package):
         dg_margin      eps, in the units of the potentials -- kJ/mol under FullThermoPkg,
@@ -59,7 +67,8 @@ class SimpleThermoPkg(BaseFBAPkg):
         filter         if given, only these reactions get thermo rows.
         exclude_reactions  reactions to leave unconstrained.
     Exchange (EX_), sink (SK_) and demand (DM_) reactions are never constrained: they cross the
-    system boundary, so a potential difference across them has no meaning here.
+    system boundary, so a potential difference across them has no meaning here. Nor are
+    reactions with no metabolites, whose dgp is 0 and so can never clear the margin.
     """
 
     def __init__(self, model):
@@ -91,8 +100,14 @@ class SimpleThermoPkg(BaseFBAPkg):
         if self.parameters["coupling"] not in ("revbin", "tmfa"):
             raise ValueError(f"coupling must be 'revbin' or 'tmfa', "
                              f"not {self.parameters['coupling']!r}")
-        if self.parameters["dg_margin"] < 0:
-            raise ValueError("dg_margin must be >= 0")
+        eps, M = self.parameters["dg_margin"], self.parameters["max_potential"]
+        if not 0 <= eps < M:
+            raise ValueError(f"dg_margin must satisfy 0 <= dg_margin < max_potential "
+                             f"({M}), not {eps}")
+        big = self.parameters["flux_big_m"]
+        if big is not None and not (0 < big < float("inf")):
+            raise ValueError(f"flux_big_m must be positive and finite, not {big}")
+        self.clear_coupling()
         if self.parameters["coupling"] == "revbin":
             self.pkgmgr.getpkg("RevBinPkg").build_package(self.parameters["filter"])
         for metabolite in self.model.metabolites:
@@ -107,6 +122,8 @@ class SimpleThermoPkg(BaseFBAPkg):
             # filtered reactions -- so the filter has to apply here too
             if flt is not None and reaction.id not in flt:
                 continue
+            if not reaction.metabolites:
+                continue
             self.build_dgp_variable(reaction)
             self.build_dgp_constraint(reaction)
             if self.parameters["coupling"] == "revbin":
@@ -114,6 +131,20 @@ class SimpleThermoPkg(BaseFBAPkg):
             else:
                 self.build_tmfa_coupling(reaction)
         self.check_tolerance()
+
+    def clear_coupling(self):
+        """Remove the coupling rows and binaries of an earlier build, of either coupling. The
+        potentials and dgp variables are kept: build_variable reuses them, and other packages
+        (FullThermoPkg) hold rows on the potentials."""
+        objs = []
+        for kind in ("thermo", "thermof", "thermor", "zfc", "zrc", "zexcl"):
+            objs.extend(self.constraints[kind].values())
+            self.constraints[kind] = {}
+        for kind in ("zf", "zr"):
+            objs.extend(self.variables[kind].values())
+            self.variables[kind] = {}
+        if objs:
+            self.model.remove_cons_vars(objs)
 
     def build_potential_variable(self, object):
         return self.build_variable(
@@ -167,6 +198,9 @@ class SimpleThermoPkg(BaseFBAPkg):
         big = self.parameters["flux_big_m"]
         if big is None:
             big = max(abs(object.lower_bound), abs(object.upper_bound))
+            if big == float("inf"):
+                raise ValueError(f"{object.id} has an infinite bound; set finite bounds or "
+                                 f"pass flux_big_m")
         dgp = self.variables["dgp"][object.id]
         has_f, has_r = object.upper_bound > 0, object.lower_bound < 0
         if has_f:

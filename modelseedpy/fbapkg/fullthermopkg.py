@@ -9,9 +9,10 @@ import numpy as np
 from numpy import log as ln
 from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 from modelseedpy.core.fbahelper import FBAHelper
+from modelseedpy.biochem.modelseed_biochem import UNKNOWN_DELTAG, NO_ESTIMATE_ERROR
 
-UNKNOWN_DELTAG = 1e6  # ModelSEED stores 10000000 for an unknown formation energy
-NO_ESTIMATE_ERROR = 1000.0  # kcal/mol: eQuilibrator's "no estimate" marker (see modelseed_biochem)
+logger = logging.getLogger(__name__)
+
 # Units. The database (and a metabolite's notes['deltag']) give formation energies and their
 # errors in kcal/mol. Everything inside this package -- potentials, dgp, the error variables,
 # default_max_error, custom_deltaG_error, max_potential, dg_margin -- is kJ/mol. Every value read
@@ -301,6 +302,12 @@ class FullThermoPkg(BaseFBAPkg):
             # so it is treated as no data: the potential stays free.
             deltag = None
         if deltag is None:
+            return None
+        if abs(deltag) * KCAL_TO_KJ >= self.parameters["max_potential"]:
+            # e.g. the mycobacterial arabinogalactans, to -15,565 kJ/mol: pinning one outside
+            # the potential bounds makes the model infeasible, so it is left free instead
+            logger.debug(f"FullThermoPkg: {object.id} formation energy {deltag} kcal/mol is "
+                         f"beyond max_potential; its potential is left free")
             return None
         if msid == "cpd00067":
             # pH-7-transformed energies: add RT ln(1e-7) back for H+ so its concentration term

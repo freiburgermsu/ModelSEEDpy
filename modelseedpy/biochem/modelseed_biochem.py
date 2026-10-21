@@ -239,23 +239,31 @@ PKA_SOURCES = ("Marvin", "Literature", "MolGpKa")
 # eQuilibrator and dGPredictor). FullThermoPkg converts both to kJ/mol.
 #
 # Two "no estimate" markers have to be recognized, and they are in different units:
-#   - ModelSEED's own, 10000000, stored as the energy and the error (UNKNOWN_DELTAG).
+#   - ModelSEED's own, 10000000, stored as the energy and the error (UNKNOWN_DELTAG). Only
+#     Group contribution carries it.
 #   - eQuilibrator's. When it cannot estimate a compound it reports an uncertainty of order
-#     1e5 kJ/mol, which the database stores converted to kcal/mol: 12,482 to 23,901 for 9,457
-#     compounds (SAM: 132.52 +/- 23,901.43). The largest genuine error in the database is
-#     38.5 kcal/mol, so nothing lies between the two populations, and NO_ESTIMATE_ERROR sits in
-#     that gap. Taken at face value the marker made SAM's 132.52 an "estimate" with an error
-#     wider than any bound in the model, and it was picked over dGPredictor's 67.83 +/- 8.41.
-# An entry carrying either marker is skipped and the next source in DELTA_G_SOURCES is used.
+#     1e5 kJ/mol, which the database stores converted to kcal/mol: 12,482 to 407,722 for 9,457
+#     compounds (SAM: 132.52 +/- 23,901.43). eQuilibrator's genuine errors reach 38.5 kcal/mol,
+#     so nothing lies between its two populations and NO_ESTIMATE_ERROR sits in that gap. The
+#     test is applied to eQuilibrator only: dGPredictor has no marker, and its genuine errors
+#     reach 911 kcal/mol.
+# A compound carrying a marker gets no energy -- its potential stays free -- rather than the next
+# source's. The sources are not on one scale: across the 16,689 compounds both estimate,
+# dGPredictor runs below eQuilibrator by an amount that grows with size (median -1.6 kcal/mol at
+# C1-3, -32 at C11-20, -103 at C21+), although the two agree on reaction energies. Mixing them
+# compound by compound moves reaction energies by hundreds of kJ/mol (rxn01406 comes out +370
+# kJ/mol against the database's own -176). A compound eQuilibrator has no entry for at all still
+# takes dGPredictor's, as before.
 UNKNOWN_DELTAG = 1e6          # kcal/mol; ModelSEED stores 10000000
 NO_ESTIMATE_ERROR = 1000.0    # kcal/mol; eQuilibrator's marker is >= 12,482
+NO_ESTIMATE_SOURCES = ("eQuilibrator",)
 
 
 def _thermodynamics(record):
     """(delta_g, delta_g_error, source) of a compound record, old schema or new.
 
-    Values are kcal/mol. A source whose entry is a "no estimate" marker is skipped in favour of
-    the next one (see NO_ESTIMATE_ERROR).
+    Values are kcal/mol. An entry carrying a "no estimate" marker leaves the energy unknown,
+    (None, None, None), rather than falling through to the next source (see NO_ESTIMATE_ERROR).
     """
     if record.get("deltag") is not None:
         return record.get("deltag"), record.get("deltagerr"), "deltag"
@@ -266,9 +274,10 @@ def _thermodynamics(record):
             continue
         error = values[1] if len(values) > 1 else None
         if abs(values[0]) >= UNKNOWN_DELTAG:
-            continue
-        if error is not None and abs(error) >= NO_ESTIMATE_ERROR:
-            continue
+            return None, None, None
+        if (source in NO_ESTIMATE_SOURCES and error is not None
+                and abs(error) >= NO_ESTIMATE_ERROR):
+            return None, None, None
         return values[0], error, source
     return None, None, None
 

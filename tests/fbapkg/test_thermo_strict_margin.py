@@ -95,16 +95,62 @@ def test_build_package_without_arguments():
     assert m.slim_optimize() == pytest.approx(0, abs=1e-6)
 
 
-def test_loader_skips_equilibrator_no_estimate_marker():
+def test_loader_leaves_no_estimate_marker_unknown():
     from modelseedpy.biochem.modelseed_biochem import _thermodynamics
+    # eQuilibrator's marker: the energy is unknown, NOT dGPredictor's, which is on another scale
     sam = {"thermodynamics": {"eQuilibrator": [132.52, 23901.43],
                               "dGPredictor": [67.83, 8.41, 0.76]}}
-    assert _thermodynamics(sam) == (67.83, 8.41, "dGPredictor")
+    assert _thermodynamics(sam) == (None, None, None)
     co2 = {"thermodynamics": {"eQuilibrator": [-92.26, 0.76], "dGPredictor": [-91.91, 2.09]}}
     assert _thermodynamics(co2) == (-92.26, 0.76, "eQuilibrator")
     unknown = {"thermodynamics": {"eQuilibrator": [27.8, 12482.4],
                                   "Group contribution": [1e7, 1e7]}}
     assert _thermodynamics(unknown) == (None, None, None)
+    # no eQuilibrator entry at all still takes dGPredictor, as before
+    only_dgp = {"thermodynamics": {"dGPredictor": [-40.0, 5.0]}}
+    assert _thermodynamics(only_dgp) == (-40.0, 5.0, "dGPredictor")
+    # dGPredictor has no marker: a large genuine error is kept
+    wide = {"thermodynamics": {"dGPredictor": [-500.0, 911.43]}}
+    assert _thermodynamics(wide) == (-500.0, 911.43, "dGPredictor")
+
+
+def test_rebuild_with_another_coupling_replaces_the_rows():
+    m = _model()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("SimpleThermoPkg")
+    pkg.build_package({"dg_margin": 1.0, "coupling": "revbin"})
+    m.objective = "L1"
+    assert m.slim_optimize() == pytest.approx(0, abs=1e-6)
+    # eps = 0 under tmfa must behave as eps = 0, not keep revbin's eps = 1 rows
+    pkg.build_package({"dg_margin": 0.0, "coupling": "tmfa"})
+    assert not pkg.constraints["thermo"]
+    assert m.slim_optimize() == pytest.approx(1000)
+    pkg.build_package({"dg_margin": 1.0, "coupling": "tmfa"})
+    assert m.slim_optimize() == pytest.approx(0, abs=1e-6)
+
+
+@pytest.mark.parametrize("params", [{"dg_margin": 10000.0}, {"dg_margin": -1.0},
+                                    {"coupling": "tmfa", "flux_big_m": 0},
+                                    {"coupling": "tmfa", "flux_big_m": float("inf")}])
+def test_bad_parameters_are_rejected(params):
+    pkg = MSPackageManager.get_pkg_mgr(_model()).getpkg("SimpleThermoPkg")
+    with pytest.raises(ValueError):
+        pkg.build_package(params)
+
+
+def test_tmfa_rejects_an_infinite_bound():
+    m = _model()
+    m.reactions.R1.upper_bound = float("inf")
+    with pytest.raises(ValueError, match="R1"):
+        MSPackageManager.get_pkg_mgr(m).getpkg("SimpleThermoPkg").build_package(
+            {"coupling": "tmfa"})
+
+
+@pytest.mark.parametrize("coupling", ["revbin", "tmfa"])
+def test_empty_reaction_is_skipped(coupling):
+    # a reaction with no metabolites has dgp = 0; under revbin it made the model infeasible
+    m = _model(with_loop=False)
+    m.add_reactions([cobra.Reaction("EMPTY", lower_bound=-1000, upper_bound=1000)])
+    assert _max(m, "EX_C_e0", dg_margin=1.0, coupling=coupling) == pytest.approx(10)
 
 
 def test_database_error_is_converted_to_kj(monkeypatch):
