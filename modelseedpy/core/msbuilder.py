@@ -362,10 +362,14 @@ class MSBuilder:
             logger.warning("cannot build model sinks without generating model species")
             return None
         if self.template.drains:
+            # a drain's (lower, upper) bounds: a demand -- a SOURCE of the compound -- only where
+            # the template allows uptake (lower < 0), at that bound. Every drain used to get one
+            # at -1000, so the templates' consumption-only drains ([0, 1000] for the biomass
+            # token, cpd01042, cpd02701, ...) became free sources in every built model.
             demands = {
-                x.id: -1000
+                x.id: t[0]
                 for x, t in self.template.drains.items()
-                if x.id in self.template_species_to_model_species
+                if t[0] < 0 and x.id in self.template_species_to_model_species
             }
             return [self.build_demand_reaction(x, v) for x, v in demands.items()]
         else:
