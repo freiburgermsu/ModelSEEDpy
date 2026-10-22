@@ -150,6 +150,7 @@ class MSATPCorrection:
         self.noncore_reactions = []
         self.other_compartments = []
         self.media_gapfill_stats = {}
+        self.media_evaluated = False      # set by evaluate_growth_media
         self.filtered_noncore = []
         self.lp_filename = None
         self.multiplier = 1.2
@@ -320,6 +321,7 @@ class MSATPCorrection:
         :return:
         """
         self.disable_noncore_reactions()
+        self.media_evaluated = True
         self.media_gapfill_stats = {}
         self.get_msgapfill().default_gapfill_templates = [self.coretemplate]
         if self.lp_filename:
@@ -567,8 +569,11 @@ class MSATPCorrection:
         Raises
         ------
         """
-        #Checking if ATP stats have been run yet and if not, running them
-        if not self.selected_media:
+        # Run the ATP media evaluation only if it has never run. An empty selected_media after
+        # an evaluation is a result (no test medium makes ATP in the core) -- re-running here
+        # would end in restore_noncore_reactions(), which resets every non-core reaction to its
+        # original bounds and so silently undoes expand_model_to_genome_scale's filtering.
+        if not self.selected_media and not self.media_evaluated:
             logger.warning("ATP tests not yet computed - running without allowing for model changes!")
             self.evaluate_growth_media(no_gapfilling=True)
             self.determine_growth_media()
