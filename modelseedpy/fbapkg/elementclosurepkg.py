@@ -42,8 +42,10 @@ explicit atoms (R taken as the same unspecified moiety on both sides of a reacti
 -> 0, and listed in `unformulated`.
 
 Parameters (build_package):
-    elements          iterable of element symbols, or "all" (every element the boundary and
-                      biomass compounds contain). Default C, H, O, N, P, S.
+    elements          which elements get a row. Default C, H, O. Also accepted: "all" (every
+                      element the boundary and biomass compounds contain, metals included), a
+                      string of symbols ("C,H,O,N,P,S" or "C H O N"), or any iterable of symbols.
+                      Unknown symbols raise ValueError. See parse_elements.
     charge            also close charge. Default False.
     sense             "le" (default): no net creation, destruction allowed -- biomass may keep
                       atoms, and so may sinks. "eq": neither.
@@ -62,9 +64,58 @@ from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ELEMENTS = ("C", "H", "O", "N", "P", "S")
+DEFAULT_ELEMENTS = ("C", "H", "O")
+ELEMENT_SYMBOLS = frozenset("""
+    H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se
+    Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb
+    Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm
+    Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og""".split())
 _ATOM = re.compile(r"([A-Z][a-z]?)(\d+(?:\.\d+)?)?")
 _RGROUP = re.compile(r"R(?![a-z])(\d+(?:\.\d+)?)?")      # R, not Rb/Re/Rh/Ru/Rn/Ra/Rf/Rg
+
+
+def parse_elements(spec=None):
+    """The `elements` parameter, normalised: DEFAULT_ELEMENTS for None, "all" for "all" (any
+    case), otherwise a tuple of element symbols in the order given, duplicates dropped.
+
+    Accepts a string ("C,H,O,N", "C H O", "all") -- the form an environment variable or a
+    command-line option arrives in -- or an iterable of symbols (each item may itself be such a
+    string). An empty iterable gives () -- no element rows, for a charge-only closure -- but an
+    empty or blank string is an error, since it is usually an unset variable. Unknown symbols, and
+    "all" mixed with symbols, raise ValueError.
+    """
+    if spec is None:
+        return DEFAULT_ELEMENTS
+    if isinstance(spec, (bytes, bytearray)):
+        raise ValueError(f"elements must be a string or an iterable of symbols, not {type(spec).__name__}")
+    split = lambda s: [x for x in re.split(r"[\s,;]+", s.strip()) if x]
+    if isinstance(spec, str):
+        items = split(spec)
+        if not items:
+            raise ValueError("no elements given (empty string); pass symbols or 'all'")
+    else:
+        try:
+            raw = list(spec)
+        except TypeError:
+            raise ValueError(f"elements must be a string or an iterable of symbols, not "
+                             f"{type(spec).__name__}") from None
+        items = []
+        for s in raw:
+            if not isinstance(s, str):
+                raise ValueError(f"element symbols must be strings, not {s!r}")
+            items.extend(split(s))
+    if any(s.lower() == "all" for s in items):
+        if len(items) > 1:
+            raise ValueError("'all' cannot be combined with other symbols")
+        return "all"
+    out = []
+    for s in items:
+        if s not in ELEMENT_SYMBOLS:
+            raise ValueError(f"not an element symbol: {s!r} (symbols are case-sensitive, "
+                             f"e.g. 'Co' not 'CO'; or use 'all')")
+        if s not in out:
+            out.append(s)
+    return tuple(out)
 
 
 def formula_atoms(formula, strip_r=False):
@@ -104,6 +155,7 @@ class ElementClosurePkg(BaseFBAPkg):
 
     def build_contents(self):
         p = self.parameters
+        self.content, self.how = {}, {}       # recomputed each build (parameters may differ)
         tokens = set(p["biomass_tokens"])
         for met in self.model.metabolites:
             if _base_id(met) in tokens:
@@ -188,8 +240,12 @@ class ElementClosurePkg(BaseFBAPkg):
 
     # ------------------------------------------------------------------ constraints ----------
     def build_package(self, parameters=None):
+        # validate and compute first: a bad parameter must leave the existing rows in place
         terms = self.closure_terms(parameters)
         p = self.parameters
+        # then replace the rows -- otherwise rebuilding with fewer elements (say "all", then
+        # C,H,O) would leave the dropped elements' rows in the model
+        self.clear()
         for key, row in terms.items():
             coef = {}
             for rid, c in row.items():
@@ -197,7 +253,21 @@ class ElementClosurePkg(BaseFBAPkg):
                 coef[r.forward_variable] = coef.get(r.forward_variable, 0.0) + c
                 coef[r.reverse_variable] = coef.get(r.reverse_variable, 0.0) - c
             self.build_constraint("closure", 0 if p["sense"] == "eq" else None, 0, coef, key)
+        self.terms = terms                    # what summary/creation/imbalanced_reactions report
         return self.summary()
+
+    def clear(self):
+        """Remove this package's closure rows. Only rows still in the solver are removed (a row
+        built inside a `with model:` block is gone once the block exits), and only rows named
+        for an element or charge -- the package adopts any existing constraint ending in
+        '_closure' when it is created, and one that is not a closure row is left alone."""
+        rows = self.constraints.get("closure", {})
+        mine = {k: c for k, c in rows.items() if k in ELEMENT_SYMBOLS or k == "charge"}
+        live = [c for c in mine.values() if c.name in self.model.constraints]
+        if live:
+            self.model.remove_cons_vars(live)
+        self.constraints["closure"] = {k: c for k, c in rows.items() if k not in mine}
+        self.terms = {}
 
     def closure_terms(self, parameters=None):
         """The closure rows without building them: {element: {reaction id: coefficient}}, each
@@ -205,7 +275,11 @@ class ElementClosurePkg(BaseFBAPkg):
 
         For solvers driven outside optlang -- e.g. a model too large to load into an optlang
         interface, solved from its stoichiometric matrix -- add these rows directly.
-        build_package builds exactly these.
+        build_package builds exactly these. This call does not change the built rows or what
+        summary(), creation() and imbalanced_reactions() report.
+
+        A requested element that no boundary or biomass compound contains gets no row (it would
+        read 0 <= 0); a warning names it.
         """
         self.validate_parameters(
             parameters or {},
@@ -231,14 +305,23 @@ class ElementClosurePkg(BaseFBAPkg):
                          if r.id not in bio_ids and (r.boundary or
                                                      r.id.startswith(("EX_", "SK_", "DM_")))]
         rows = list(self.boundary) + list(self.biomass)
-        elements = p["elements"]
+        elements = parse_elements(p["elements"])
         if elements == "all":
-            found = set()
+            found, odd = set(), {}
             for r in rows:
                 for met in r.metabolites:
-                    found.update(self.atoms_of(met)[0])
+                    for sym in self.atoms_of(met)[0]:
+                        if sym in ELEMENT_SYMBOLS:
+                            found.add(sym)
+                        else:
+                            odd.setdefault(sym, met.id)
+            if odd:
+                logger.warning(f"ElementClosurePkg: 'all' skips formula tokens that are not "
+                               f"elements: {odd}")
             elements = sorted(found)
         keys = list(elements) + (["charge"] if p["charge"] else [])
+        if not keys:
+            raise ValueError("no rows to build: give elements, or charge=True")
         exempt_rxns = []
         for rid, why in exempt.items():
             if rid not in self.model.reactions:
@@ -261,8 +344,11 @@ class ElementClosurePkg(BaseFBAPkg):
                 b = self.imbalance(r, key)
                 if abs(b) > 1e-12:
                     terms[r.id] = terms.get(r.id, 0.0) - b
-            self.terms[key] = terms
-            out[key] = dict(terms)
+            if not terms:
+                logger.warning(f"ElementClosurePkg: no boundary or biomass compound contains "
+                               f"{key}; no row built for it")
+                continue
+            out[key] = terms
         return out
 
     # ------------------------------------------------------------------ reporting ------------
@@ -290,7 +376,8 @@ class ElementClosurePkg(BaseFBAPkg):
     def imbalanced_reactions(self, keys=None, tol=1e-9):
         """Internal reactions that create or destroy a closed quantity, under formulas alone
         (reactions involving an R-group or unformulated metabolite are left out: their balance
-        is not defined). These are the curation targets."""
+        is not defined). These are the curation targets. `keys` defaults to the rows built --
+        C, H and O by default -- so pass keys=[...] for a full list (e.g. every element)."""
         keys = keys or list(self.terms)
         bio_ids = {r.id for r in self.biomass}
         bnd = {r.id for r in self.boundary}
