@@ -128,12 +128,12 @@ def test_closure_terms_match_built_rows():
             assert lin[r.reverse_variable] == pytest.approx(-c)
 
 
-def test_default_rows_are_carbon_hydrogen_oxygen(caplog):
+def test_default_closes_every_element_present(caplog):
     from modelseedpy.fbapkg.elementclosurepkg import DEFAULT_ELEMENTS
-    assert DEFAULT_ELEMENTS == ("C", "H", "O")
-    info = _close(_toy())
-    # the toy's boundary and biomass hold no H, so the H row is skipped (and said so)
-    assert set(info["rows"]) == {"C", "O"}
+    assert DEFAULT_ELEMENTS == "all"
+    assert set(_close(_toy())["rows"]) == {"C", "O"}          # all the toy's boundary holds
+    # an explicit element the boundary lacks gets no row, and a warning says so
+    assert set(_close(_toy(), elements="C,H,O")["rows"]) == {"C", "O"}
     assert any("contains H" in r.message for r in caplog.records)
 
 
@@ -169,11 +169,11 @@ def _nitrogen_maker():
     return m
 
 
-def test_default_does_not_close_nitrogen_but_all_does():
+def test_carbon_hydrogen_oxygen_leave_nitrogen_open_the_default_closes_it():
     m = _nitrogen_maker()
-    _close(m)                                                 # C, H, O only
+    _close(m, elements="C,H,O")
     assert _max(m, "EX_Y_e0") == pytest.approx(1)             # N made from nothing passes
-    for spec in ("C,H,O,N", "all"):
+    for spec in ("C,H,O,N", "all", None):
         m = _nitrogen_maker()
         _close(m, elements=spec)
         assert _max(m, "EX_Y_e0") == pytest.approx(0, abs=1e-9)
@@ -185,7 +185,7 @@ def test_rebuild_with_fewer_elements_replaces_the_rows():
     pkg.build_package({"elements": "all"})
     assert set(pkg.constraints["closure"]) == {"C", "H", "N"}
     assert _max(m, "EX_Y_e0") == pytest.approx(0, abs=1e-9)
-    info = pkg.build_package({})                               # back to C, H, O (no O here)
+    info = pkg.build_package({"elements": "C,H,O"})            # C, H, O (no O here)
     assert set(info["rows"]) == {"C", "H"}
     assert set(pkg.constraints["closure"]) == {"C", "H"}
     names = {c.name for c in m.constraints if c.name.endswith("_closure")}
