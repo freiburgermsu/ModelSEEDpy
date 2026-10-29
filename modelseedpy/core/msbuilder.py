@@ -978,6 +978,41 @@ class MSBuilder:
 
         return added_reactions, add_exchanges
 
+    @staticmethod
+    def apply_gapfill_reversals(model, reversed_reactions):
+        """Open the directions a gapfilling solution reversed.
+
+        MSGapfill.run_gapfilling returns two kinds of change. "new" lists template reactions
+        to add. "reversed" lists reactions the model already has, which the solution needs
+        in a direction their bounds forbid. integrate_gapfill_solution only adds the "new"
+        set. Without this step the gapfilled model lacks part of its own solution, and it
+        can fail to grow on the very medium it was gapfilled on.
+
+        Each reversed reaction is opened in the direction the gapfiller chose, to the bound
+        get_reaction_constraints_from_direction gives that direction: the same bound
+        build_and_gapfill gives a new reaction. The other bound is left as it was. A bound
+        that is already wider is kept.
+
+        :param model: the gapfilled model, which already holds the reactions
+        :param reversed_reactions: {reaction id: ">" or "<"}, the solution's "reversed" dict
+        :return: the ids of the reactions whose bounds were opened, sorted
+        """
+        from modelseedpy.core.msmodel import get_reaction_constraints_from_direction
+
+        applied = []
+        for rxn_id, direction in sorted((reversed_reactions or {}).items()):
+            if rxn_id not in model.reactions:
+                logger.warning(f"gapfill reversal of {rxn_id}: reaction not in the model")
+                continue
+            rxn = model.reactions.get_by_id(rxn_id)
+            lb, ub = get_reaction_constraints_from_direction(direction)
+            if ub > 0:
+                rxn.upper_bound = max(rxn.upper_bound, ub)
+            if lb < 0:
+                rxn.lower_bound = min(rxn.lower_bound, lb)
+            applied.append(rxn_id)
+        return applied
+
     def build_and_gapfill(
         self,
         model_or_id,
@@ -1052,6 +1087,12 @@ class MSBuilder:
         # print(gap_sol)
         model_gapfilled = model_base.copy()
         MSBuilder.integrate_gapfill_solution(self.template, model_gapfilled, gap_sol)
+        # the solution also reverses reactions the model already holds; gap_sol carries
+        # only the new ones, so apply the reversals here or the model loses them
+        reversed_applied = MSBuilder.apply_gapfill_reversals(
+            model_gapfilled, gapfill_res.get("reversed")
+        )
+        logger.debug(f"Gapfill reversals applied: {reversed_applied}")
 
         return model_gapfilled, atp_correction, tests, gap_sol
 
