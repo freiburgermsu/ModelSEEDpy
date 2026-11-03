@@ -246,3 +246,32 @@ def test_community_path_builds_the_carbon_cap_once():
     models = [_member("memA", "cpd00027", 10), _member("memB", "cpd00082", 4)]
     sol = MSProbability.prFBA(models, environment={"cpd00027": 10, "cpd00082": 4})
     assert sol.status == "optimal"
+
+
+# ---------------------------------------------------------------- no growth, infeasible
+def test_no_growth_raises_instead_of_an_all_zero_solution(base_model):
+    """environment={} closes every uptake; with ATP maintenance released the model is
+    feasible but cannot grow, so the floor would be 0 and the minimization would return the
+    all-zero vector as 'optimal'."""
+    m = base_model.copy()
+    m.reactions.get_by_id("ATPM_c0").lower_bound = 0
+    with pytest.raises(ValueError, match="all-zero"):
+        MSProbability.prFBA(m, environment={}, biomass_id=BIOMASS)
+
+
+def test_infeasible_medium_raises_a_clear_error(base_model):
+    """With ATP maintenance at its lower bound and no uptake the model is infeasible; the
+    released code handed the solver a NaN bound (opaque solver error)."""
+    m = base_model.copy()
+    assert m.reactions.get_by_id("ATPM_c0").lower_bound > 0
+    with pytest.raises(ValueError, match="infeasible"):
+        MSProbability.prFBA(m, environment={}, biomass_id=BIOMASS)
+
+
+def test_min_growth_none_keeps_the_unchecked_behaviour(base_model):
+    m = base_model.copy()
+    m.reactions.get_by_id("ATPM_c0").lower_bound = 0
+    sol = MSProbability.prFBA(m, environment={}, biomass_id=BIOMASS, min_growth=None)
+    assert sol.status == "optimal"
+    assert abs(sol.objective_value) < 1e-9
+    assert all(abs(v) < 1e-9 for v in sol.fluxes)

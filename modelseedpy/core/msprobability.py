@@ -154,7 +154,7 @@ class MSProbability:
     @staticmethod
     def prFBA(model_s_, environment=None, abundances=None, min_prob=0.01, prob_exp=1, ex_weight=100,
               commkinetics=None, kinetics_coef=1000, printLP=False, expression=None,
-              missing_probability=None, biomass_id=None):
+              missing_probability=None, biomass_id=None, min_growth=1e-6):
         """Probabilistic FBA: hold the objective at 95% of its maximum, then minimize
 
             sum_r max(min_prob, 1 - p_r**prob_exp) * |v_r|  +  sum_ex ex_weight * |v_ex|
@@ -199,6 +199,12 @@ class MSProbability:
             build_tests sets the model's objective to ATP hydrolysis (ATPM_c0), so a model
             built through ATP correction and gapfilling can carry ATPM_c0, and the floor then
             holds ATP maintenance, not growth. Pass the biomass id (e.g. "bio1") then.
+        min_growth : float or None
+            The smallest maximum of the floored objective that is accepted (default 1e-6).
+            Below it the 95% floor is (near) 0 and the weighted minimization returns the
+            all-zero flux vector with status "optimal"; an infeasible model would instead
+            reach the solver as a NaN bound. Both raise ValueError. By then the medium and
+            the carbon-uptake package are already on the model. None disables the check.
 
         Returns
         -------
@@ -243,6 +249,18 @@ class MSProbability:
 
         # constrain the model to 95% of the optimum growth
         maxBioSol = mdlUtil.model.slim_optimize()
+        if min_growth is not None:
+            objective = str(mdlUtil.model.objective.expression)[:80]
+            if maxBioSol is None or maxBioSol != maxBioSol:     # NaN: no feasible solution
+                raise ValueError(f"{mdlUtil.model.id}: the model is infeasible under this "
+                                 f"medium and the carbon cap (solver status "
+                                 f"{mdlUtil.model.solver.status}); objective {objective}.")
+            if maxBioSol < min_growth:
+                raise ValueError(f"{mdlUtil.model.id}: the objective's maximum is {maxBioSol:g} "
+                                 f"(< min_growth {min_growth:g}), so the 95% floor would be "
+                                 f"~0 and the weighted minimization would return the all-zero "
+                                 f"flux vector. Pass an environment on which the model grows, or "
+                                 f"check biomass_id; objective {objective}.")
         mdlUtil.add_minimal_objective_cons(maxBioSol*.95)
 
         # weight internal reactions based on their probabilities
