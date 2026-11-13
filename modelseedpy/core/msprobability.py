@@ -153,7 +153,63 @@ class MSProbability:
 
     @staticmethod
     def prFBA(model_s_, environment=None, abundances=None, min_prob=0.01, prob_exp=1, ex_weight=100,
-              commkinetics=None, kinetics_coef=1000, printLP=False, expression=None):
+              commkinetics=None, kinetics_coef=1000, printLP=False, expression=None,
+              missing_probability=None, biomass_id=None, min_growth=1e-6):
+        """Probabilistic FBA: hold the objective at 95% of its maximum, then minimize
+
+            sum_r max(min_prob, 1 - p_r**prob_exp) * |v_r|  +  sum_ex ex_weight * |v_ex|
+
+        over the "rxn"-prefixed reactions r (p_r = float(rxn.notes["probability"])) and the
+        "EX_" exchanges, with total carbon uptake capped at 100 (ElementUptakePkg). |v| is
+        the forward plus the reverse variable. Other reactions (biomass, ATPM, sinks) have
+        coefficient 0.
+
+        Parameters
+        ----------
+        model_s_ : cobra.Model, or a list of cobra.Model
+            One model, bare or as a one-element list, is simulated itself. It is modified
+            in place: the medium, the carbon-uptake package, the "min_value" floor and the
+            objective are set on it, so pass ``model.copy()`` to keep the original. A second
+            call on the same object raises PackageError (ElementUptakePkg is already
+            registered). Two or more models are merged with
+            mscommunity.commhelper.build_from_species_models.
+        environment : dict, MSMedia or None
+            None (default) keeps the model's own exchange bounds. A dict goes through
+            MSModelUtil.add_medium: keys are compound ids (mapped to ``EX_<id>_e0``) or,
+            when any key contains "EX_", exchange ids; it becomes ``model.medium`` (keys
+            without an exchange in the model are dropped), so every uptake not listed is
+            closed. An MSMedia goes through
+            FBAHelper.convert_kbase_media, whose default sets every listed compound's
+            uptake to 1000 regardless of the media's own bounds.
+        min_prob, prob_exp, ex_weight : float
+            The terms of the objective above.
+        printLP : bool
+            Print the constraint names and write the LP to ./prFBA.lp. Silent otherwise.
+        missing_probability : float or None
+            The probability used for a "rxn" reaction that carries no notes["probability"].
+            None (default) raises KeyError naming those reactions, before the model is
+            changed. Reactions added after the probabilities were annotated carry no note:
+            gapfilled reactions, for example. Pass 0.0 to weight them like reactions
+            without genetic evidence: coefficient max(min_prob, 1 - 0) = 1, the same as a
+            reaction annotated with probability 0 (the usual value for a reaction without
+            genes when p(reaction) = max over its genes).
+        biomass_id : str or None
+            The reaction whose maximum sets the 95% floor. None (default) keeps whatever
+            objective the model carries on entry, as before. Check it: MSATPCorrection.
+            build_tests sets the model's objective to ATP hydrolysis (ATPM_c0), so a model
+            built through ATP correction and gapfilling can carry ATPM_c0, and the floor then
+            holds ATP maintenance, not growth. Pass the biomass id (e.g. "bio1") then.
+        min_growth : float or None
+            The smallest maximum of the floored objective that is accepted (default 1e-6).
+            Below it the 95% floor is (near) 0 and the weighted minimization returns the
+            all-zero flux vector with status "optimal"; an infeasible model would instead
+            reach the solver as a NaN bound. Both raise ValueError. By then the medium and
+            the carbon-uptake package are already on the model. None disables the check.
+
+        Returns
+        -------
+        cobra.Solution of the weighted minimization.
+        """
         # community modeling lives in the standalone MSCommunity package
         from mscommunity.commhelper import build_from_species_models
         from mscommunity.mscommsim import MSCommunity
@@ -162,38 +218,67 @@ class MSProbability:
         from optlang.symbolics import Zero
 
         # commkinetics = commkinetics if commkinetics is not None else len(model_s_) > 1
-        mdlUtil = MSModelUtil(model_s_ if len(model_s_) == 1 else build_from_species_models(model_s_, abundances=abundances, commkinetics=commkinetics))
-        mdlUtil.add_medium(environment)
+        # one model may be passed bare or as a one-element list; MSModelUtil takes the model
+        # itself (a cobra Model has no len(), and the list has no .id)
+        if not isinstance(model_s_, (list, tuple)):
+            model_s_ = [model_s_]
+        if len(model_s_) == 0:
+            raise ValueError("prFBA needs at least one model.")
+        mdlUtil = MSModelUtil(model_s_[0] if len(model_s_) == 1 else build_from_species_models(model_s_, abundances=abundances, commkinetics=commkinetics))
+        # every rxn reaction needs a probability; check before the model is changed
+        missing = [rxn.id for rxn in mdlUtil.model.reactions
+                   if "rxn" == rxn.id[0:3] and "probability" not in rxn.notes]
+        if missing and missing_probability is None:
+            raise KeyError(f"{len(missing)} rxn reactions of {mdlUtil.model.id} have no "
+                           f"notes['probability'] (first: {missing[:5]}). Annotate them, or pass "
+                           f"missing_probability (e.g. 0.0 for reactions without genetic evidence).")
+        if biomass_id is not None:
+            mdlUtil.model.objective = biomass_id
+        # environment=None keeps the model's own exchange bounds, as MSModelUtil(environment=None) does
+        if environment is not None:
+            mdlUtil.add_medium(environment)
         # constrain carbon consumption and community composition
         elepkg = ElementUptakePkg(mdlUtil.model)  ;  elepkg.build_package({"C": 100})
         ## the total flux through the members proportional to their relative abundances
         if not commkinetics and len(model_s_) > 1:
             # the MSCommunity constructor installs the community kinetic rows
             MSCommObj = MSCommunity(mdlUtil.model, model_s_, kinetic_coeff=kinetics_coef)
-        # constrain carbon consumption
-        elepkg = ElementUptakePkg(mdlUtil.model)  ;  elepkg.build_package({"C": 100})
+        # (the carbon constraint is built once, above: a second ElementUptakePkg on the same
+        # model raises PackageError "Package with name ElementUptakePkg already in model!")
         # evaluate the metabolomics data over time
 
         # constrain the model to 95% of the optimum growth
         maxBioSol = mdlUtil.model.slim_optimize()
+        if min_growth is not None:
+            objective = str(mdlUtil.model.objective.expression)[:80]
+            if maxBioSol is None or maxBioSol != maxBioSol:     # NaN: no feasible solution
+                raise ValueError(f"{mdlUtil.model.id}: the model is infeasible under this "
+                                 f"medium and the carbon cap (solver status "
+                                 f"{mdlUtil.model.solver.status}); objective {objective}.")
+            if maxBioSol < min_growth:
+                raise ValueError(f"{mdlUtil.model.id}: the objective's maximum is {maxBioSol:g} "
+                                 f"(< min_growth {min_growth:g}), so the 95% floor would be "
+                                 f"~0 and the weighted minimization would return the all-zero "
+                                 f"flux vector. Pass an environment on which the model grows, or "
+                                 f"check biomass_id; objective {objective}.")
         mdlUtil.add_minimal_objective_cons(maxBioSol*.95)
 
         # weight internal reactions based on their probabilities
-        ## minimize:   sum_r^R ((1-probabilities^prob_exp_r)*flux_r + min_prob) + sum_ex^EX(ex_weight*EX)
+        ## minimize:   sum_r^R max(min_prob, 1-probability_r^prob_exp)*flux_r + sum_ex^EX(ex_weight*EX)
         coef = {}
         # TODO experiment with reducing or eliminating the exchange limitation
         for rxn in mdlUtil.model.reactions:
             if "rxn" == rxn.id[0:3]:
-                coef.update({rxn.forward_variable: max(min_prob, (1-float(rxn.notes["probability"])**prob_exp))})
-                coef.update({rxn.reverse_variable: max(min_prob, (1-float(rxn.notes["probability"])**prob_exp))})
+                prob = float(rxn.notes.get("probability", missing_probability))
+                coef.update({rxn.forward_variable: max(min_prob, (1-prob**prob_exp))})
+                coef.update({rxn.reverse_variable: max(min_prob, (1-prob**prob_exp))})
             elif "EX_" == rxn.id[0:3]:
                 coef.update({rxn.forward_variable: ex_weight})
                 coef.update({rxn.reverse_variable: ex_weight})
         mdlUtil.add_objective(Zero, "min", coef)
 
-        print([cons.name for cons in mdlUtil.model.constraints])
-
         if printLP:
+            print([cons.name for cons in mdlUtil.model.constraints])
             with open("prFBA.lp", "w") as out:
                 out.write(str(mdlUtil.model.solver))
 
