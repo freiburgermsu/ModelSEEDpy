@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
+import logging
 import pytest
 import json
 import cobra
@@ -296,3 +297,146 @@ def test_ms_atp_correction_and_gap_fill1(
     gap_fill.integrate_gapfill_solution(result)
 
     # TODO: add some model testing assertion
+
+
+def test_build_tests_preserves_expansion_filter_when_no_media_selected(
+    get_model_with_infinite_atp_loop, template, media_glucose_aerobic
+):
+    """``build_tests`` must NOT restore non-core bounds once the ATP expansion
+    filter has been applied.
+
+    Regression for KBDLJobRunningPrototype#28, cause 2.
+    ``run_atp_correction`` ends ``return self.build_tests()`` -- that is, AFTER
+    ``expand_model_to_genome_scale`` has blocked each cycle-forming reaction by
+    zeroing one direction.  ``build_tests`` used to open with a truthiness test
+    on ``selected_media``, so a model where NO medium qualified re-entered the
+    "not yet computed" branch, and that branch ends in
+    ``restore_noncore_reactions()`` -- which writes ``original_bounds`` back
+    over every non-core reaction and so silently undoes the filter, returning
+    energy-generating cycles to the delivered model.  Measured on KBDL builds:
+    ``rxn08941_c0`` went from blocked back to [-1000, 1000], and free ATP from
+    0 to 1000.
+
+    An empty ``selected_media`` is a real answer ("evaluated, nothing
+    qualified"), not a missing one, so the guard must distinguish it from
+    ``None`` ("never evaluated").  This pins the ``[]`` side; the ``None`` side
+    is pinned by :func:`test_build_tests_computes_when_never_evaluated`.
+
+    The filter is applied here the same way ``expand_model_to_genome_scale``
+    applies it -- zero one direction of a reaction that ``disable_noncore_
+    reactions`` has recorded in ``original_bounds`` -- rather than by running
+    the genome-scale expansion, so the test needs no solver-dependent
+    expansion result and no local biochemistry database.
+    """
+    model = get_model_with_infinite_atp_loop()
+    atp_correction = MSATPCorrection(
+        model,
+        template,
+        [media_glucose_aerobic],
+        atp_hydrolysis_id="ATPM_c0",
+        load_default_medias=False,
+    )
+    # Populates noncore_reactions and original_bounds, then selects media.
+    atp_correction.evaluate_growth_media(no_gapfilling=True)
+    atp_correction.determine_growth_media()
+    atp_correction.restore_noncore_reactions(noncore=True, othercompartment=False)
+
+    # Pick a victim shaped like the reactions that actually formed the cycles:
+    # REVERSIBLE (original bounds negative-to-positive, as rxn08941_c0 was at
+    # [-1000, 1000]), non-core, and still in the model, so that a restore is
+    # unambiguously observable.  Biomass and exchange reactions are excluded --
+    # ``disable_noncore_reactions`` means to skip them, and only misses the
+    # biomass here because ``FBAHelper.is_biomass`` matches a lowercase "bio"
+    # prefix while this fixture's id is uppercase.
+    victim = None
+    for reaction, _direction in atp_correction.noncore_reactions:
+        bounds = atp_correction.original_bounds.get(reaction.id)
+        if not bounds or reaction.id not in model.reactions:
+            continue
+        if reaction.id.lower().startswith(("bio", "ex_", "dm_", "sk_")):
+            continue
+        if bounds[0] < 0 and bounds[1] > 0:
+            victim = reaction
+            break
+    if victim is None:
+        pytest.skip("fixture produced no reversible non-core reaction to filter")
+    original_upper = atp_correction.original_bounds[victim.id][1]
+    assert original_upper > 0
+
+    # Apply the filter exactly as expand_model_to_genome_scale does.
+    atp_correction.filtered_noncore = [(victim, ">")]
+    victim.upper_bound = 0
+
+    # The exact state a KBDL build reaches: media evaluated, none qualified.
+    atp_correction.selected_media = []
+    atp_correction.build_tests()
+
+    assert model.reactions.get_by_id(victim.id).upper_bound == 0, (
+        f"build_tests restored {victim.id} to upper_bound "
+        f"{model.reactions.get_by_id(victim.id).upper_bound} (original "
+        f"{original_upper}), erasing the ATP expansion filter"
+    )
+
+
+def test_build_tests_computes_when_never_evaluated(
+    get_model, template, media_glucose_aerobic
+):
+    """The other side of the same gate: a caller asking for tests before any
+    evaluation must still get the media evaluated.
+
+    ``selected_media`` is ``None`` until ``determine_growth_media`` runs, and
+    that is the case the "not yet computed" branch exists for.  Narrowing the
+    guard to ``is None`` must not disable it.
+    """
+    model = get_model()
+    atp_correction = MSATPCorrection(
+        model,
+        template,
+        [media_glucose_aerobic],
+        atp_hydrolysis_id="ATPM_c0",
+        load_default_medias=False,
+    )
+    assert atp_correction.selected_media is None
+    atp_correction.build_tests()
+    assert atp_correction.selected_media is not None
+
+
+def test_determine_growth_media_warns_when_nothing_selected(
+    get_model_with_infinite_atp_loop, template, caplog
+):
+    """A model where NO medium qualified must say so in the log.
+
+    ``determine_growth_media`` leaves ``selected_media == []`` in that case and
+    raises nothing, and ``build_tests`` then returns the empty-media test alone
+    -- a far weaker guarantee than the caller asked for, with no signal that it
+    happened. The sibling tests
+    :func:`test_build_tests_preserves_expansion_filter_when_no_media_selected`
+    and :func:`test_build_tests_computes_when_never_evaluated` pin the two sides
+    of the ``is None`` guard; this one pins the operator's only warning that the
+    empty-list side was taken.
+
+    ``atp_medias`` is passed as ``[]`` rather than as a real medium on purpose.
+    ``__init__`` currently discards that argument (``self.atp_medias = []``), so
+    passing a medium here would leave the candidate list empty anyway -- and this
+    test would then be asserting "nothing was selected" for a reason that is a
+    separate bug, and would start failing the moment that bug is fixed. Asking
+    for no media explicitly makes the empty selection the test's own premise.
+    """
+    model = get_model_with_infinite_atp_loop()
+    atp_correction = MSATPCorrection(
+        model,
+        template,
+        [],
+        atp_hydrolysis_id="ATPM_c0",
+        load_default_medias=False,
+    )
+    atp_correction.evaluate_growth_media(no_gapfilling=True)
+    with caplog.at_level(logging.WARNING, logger="modelseedpy.core.msatpcorrection"):
+        atp_correction.determine_growth_media()
+
+    assert atp_correction.selected_media == []
+    assert any(
+        "No ATP test media selected" in record.getMessage()
+        for record in caplog.records
+        if record.levelno >= logging.WARNING
+    ), "determine_growth_media selected nothing and did not warn"

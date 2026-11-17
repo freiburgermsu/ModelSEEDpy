@@ -90,8 +90,8 @@ class FullThermoPkg(BaseFBAPkg):
                 "custom_concentrations": {},
                 "custom_deltaG_error": {"cpd00067": 0},
                 "compartment_potential": {
-                    "e0": 0,  # Extracellular MUST be the zero reference for compartment electrochemical potential (so community modeling works)
-                    "c0": -160,  # mV = 0.33 (pHint - pHext) - 143.33 where pHint = 7 and pHext = 6.5
+                    "e0": 0,    # mV — extracellular MUST be the zero reference for compartment electrochemical potential (so community modeling works)
+                    "c0": -160, # mV = 0.33*(pHint - pHext) - 143.33 where pHint=7, pHext=6.5
                 },
                 "temperature": 298,  # K
                 "filter": None,
@@ -122,6 +122,8 @@ class FullThermoPkg(BaseFBAPkg):
                 # take each compound's error bound from the database's own
                 # estimate where it is larger than default_max_error
                 "use_database_error": True,
+                "concfit_objective_type": "l1",
+                "concfit_weights": None,
             },
         )
         simple_thermo_parameters = {
@@ -160,7 +162,22 @@ class FullThermoPkg(BaseFBAPkg):
         if self.parameters["set_min_error_objective"]:
             self.build_min_error_objective()
         if self.parameters["set_concfit_objective"]:
-            self.build_concfit_objective(self.parameters["target_concentrations"])
+            if "target_concentrations" not in self.parameters:
+                raise ValueError(
+                    "build_package: 'target_concentrations' is required in parameters "
+                    "when 'set_concfit_objective' is True."
+                )
+            target_concentrations = self.parameters["target_concentrations"]
+            concfit_weights = self.parameters["concfit_weights"]
+            objective_type = self.parameters["concfit_objective_type"]
+            if objective_type == "l2":
+                self.build_concfit_objective_l2(target_concentrations, concfit_weights)
+            elif objective_type == "l1":
+                self.build_concfit_objective(target_concentrations, concfit_weights)
+            else:
+                raise ValueError(
+                    f"build_package: 'concfit_objective_type' must be 'l1' or 'l2', got {objective_type!r}."
+                )
 
     def build_min_error_objective(self):
         objvars = []
@@ -171,14 +188,49 @@ class FullThermoPkg(BaseFBAPkg):
                 objvars.append(self.variables["ndgerr"][metabolite.id])
         self._set_min_objective(objvars)
 
-    def build_concfit_objective(self, target_concentrations):
+    @staticmethod
+    def _validate_concfit_weights(weights):
+        """Validate a metabolite-id -> weight dict: every weight must be a
+        finite number >= 0. Raises ValueError otherwise. A weight of 0 is
+        valid (it drops that metabolite's term from the objective)."""
+        for metabolite_id, weight in weights.items():
+            if weight is None or not np.isfinite(weight):
+                raise ValueError(
+                    f"Weight for metabolite '{metabolite_id}' must be a finite number; got {weight!r}."
+                )
+            if weight < 0:
+                raise ValueError(
+                    f"Weight for metabolite '{metabolite_id}' must be >= 0; got {weight!r}."
+                )
+
+    def _is_qp_capable_solver(self):
+        """Detect whether self.model is currently attached to a QP-capable
+        optlang backend (gurobi or cplex), by module identity of the solver
+        interface. GLPK, SCIPY, and the hybrid interface are not QP-capable
+        (see build_concfit_objective_l2 for why this matters)."""
+        interface_name = getattr(self.model.solver.interface, "__name__", "")
+        return interface_name.startswith("optlang.gurobi_interface") or interface_name.startswith(
+            "optlang.cplex_interface"
+        )
+
+    def _require_qp_capable_solver(self):
+        if not self._is_qp_capable_solver():
+            raise NotImplementedError(
+                "L2 concentration-fit objective requires a QP-capable solver backend "
+                "(gurobi/cplex) - set model.solver before calling build_package"
+            )
+
+    def build_concfit_objective(self, target_concentrations, weights=None):
+        weights = weights or {}
+        self._validate_concfit_weights(weights)
         #Removing all existing concfit constraints
         for metabolite in self.model.metabolites:
             if metabolite.id in self.constraints["concfit"]:
                 self.model.remove_cons_vars(self.constraints["concfit"][metabolite.id])
-        objvars = []
+        objcoefs = {}
         for metabolite in self.model.metabolites:
             if metabolite.id in target_concentrations:
+                w = weights.get(metabolite.id, 1.0)
                 if metabolite.id not in self.variables["pconcfit"]:
                     self.build_variable("pconcfit", 0, 100, "continuous", metabolite)
                 if metabolite.id not in self.variables["nconcfit"]:
@@ -186,19 +238,67 @@ class FullThermoPkg(BaseFBAPkg):
                 self.build_constraint(
                     "concfit", target_concentrations[metabolite.id], target_concentrations[metabolite.id], {self.variables["pconcfit"][metabolite.id]:1,self.variables["nconcfit"][metabolite.id]:-1,self.variables["logconc"][metabolite.id]:1}, metabolite
                 )
-                objvars.append(self.variables["pconcfit"][metabolite.id])
-                objvars.append(self.variables["nconcfit"][metabolite.id])
-        self._set_min_objective(objvars)
+                objcoefs[self.variables["pconcfit"][metabolite.id]] = w
+                objcoefs[self.variables["nconcfit"][metabolite.id]] = w
+        self._set_min_objective(objcoefs)
 
     def _set_min_objective(self, objvars):
         # The coefficients are set on the objective rather than built into an
         # expression: optlang cannot parse the sum of bare variables that
         # `add([1 * var, ...])` collapses to when symengine backs it.
+        # `objvars` is {variable: coefficient}, or a list of variables that all
+        # get coefficient 1.
+        if not isinstance(objvars, dict):
+            objvars = {var: 1 for var in objvars}
         self.model.objective = self.model.problem.Objective(
             Zero, direction="min", sloppy=True
         )
-        self.model.objective.set_linear_coefficients({var: 1 for var in objvars})
+        self.model.objective.set_linear_coefficients(objvars)
 
+
+    def build_concfit_objective_l2(self, target_concentrations, weights=None):
+        """Weighted least-squares concentration-fit objective:
+        minimize sum_i w_i * (logconc_i - target_i)^2 over the fitted set
+        (metabolites present in target_concentrations). Unlike
+        build_concfit_objective, this uses no pconcfit/nconcfit slack
+        variables — the squared term is expressible directly against the
+        logconc variable — so any slacks/constraints left over from a prior
+        L1 build for the fitted set are removed first.
+
+        Requires a QP-capable optlang backend (gurobi/cplex); raises
+        NotImplementedError early otherwise, since GLPK cannot hold a
+        quadratic objective at all.
+        """
+        weights = weights or {}
+        self._require_qp_capable_solver()
+        self._validate_concfit_weights(weights)
+
+        # Remove any pre-existing concfit constraints (mirrors build_concfit_objective).
+        for metabolite in self.model.metabolites:
+            if metabolite.id in self.constraints["concfit"]:
+                self.model.remove_cons_vars(self.constraints["concfit"][metabolite.id])
+                del self.constraints["concfit"][metabolite.id]
+
+        # Remove any pre-existing pconcfit/nconcfit slack variables for the fitted set —
+        # an L2 build after an L1 build must leave no stale slacks behind.
+        stale_vars = []
+        for metabolite_id in target_concentrations:
+            if metabolite_id in self.variables["pconcfit"]:
+                stale_vars.append(self.variables["pconcfit"].pop(metabolite_id))
+            if metabolite_id in self.variables["nconcfit"]:
+                stale_vars.append(self.variables["nconcfit"].pop(metabolite_id))
+        if stale_vars:
+            self.model.remove_cons_vars(stale_vars)
+
+        objvars = []
+        for metabolite in self.model.metabolites:
+            if metabolite.id in target_concentrations and metabolite.id in self.variables["logconc"]:
+                w = weights.get(metabolite.id, 1.0)
+                target = target_concentrations[metabolite.id]
+                objvars.append(w * (self.variables["logconc"][metabolite.id] - target) ** 2)
+        self.model.objective = self.model.problem.Objective(
+            add(objvars), direction="min", sloppy=True
+        )
 
     def build_logconc_variable(self, object):
         msid = self.modelutl.metabolite_msid(object)
@@ -268,11 +368,14 @@ class FullThermoPkg(BaseFBAPkg):
 
     def build_gibbs_constraint(self, object):
         msid = self.modelutl.metabolite_msid(object)
-        
-        # potential(i) (kJ/mol) = deltaG(i) (kJ/mol) + R * T(K) * lnconc(i) + charge(i) * compartment_potential
+
+        # potential(i) (kJ/mol) = deltaG(i) (kJ/mol) + R*T(K)*lnconc(i)
+        #                         + charge(i) * Faraday(kC/mol) * compartment_potential(mV) / 1000
+        # compartment_potential is in mV throughout (build_package default: e0=0 mV, c0=-160 mV).
+        # Dividing by 1000 converts mV -> V so that kC/mol * V = kJ/mol.
         if object.id not in self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"]:
             return None
-        
+
         pos_deltagerr_variable = self.variables["pdgerr"][object.id]
         neg_deltagerr_variable = self.variables["ndgerr"][object.id]
         potential_variable = self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"][object.id]
@@ -320,8 +423,27 @@ class FullThermoPkg(BaseFBAPkg):
             compartment_potential = self.parameters["compartment_potential"][
                 object.compartment
             ]
-        # kC/mol * mV = J/mol, so the electrical term is divided by 1000 to reach
-        # the kJ/mol of the other terms
+        # Sanity-check: compartment_potential is expected in mV.
+        # Typical biological membrane potentials are well under 300 mV in magnitude.
+        # Values above 300 mV are suspicious (possible volts/mV unit slip; e.g. 0.16 V
+        # mis-entered as 160 would not trigger this, but -160 mV correctly does not).
+        # Values above 1000 mV are egregiously non-physical.
+        abs_cp = abs(compartment_potential)
+        if abs_cp > 1000:
+            logger.warning(
+                "compartment_potential for '%s' is %.1f mV, which is egregiously "
+                "non-physical (|V| > 1000 mV). Verify units — expected mV.",
+                object.compartment, compartment_potential,
+            )
+        elif abs_cp > 300:
+            logger.warning(
+                "compartment_potential for '%s' is %.1f mV, which is unusually large "
+                "(|V| > 300 mV). Typical biological membrane potentials sit well under "
+                "300 mV; verify that mV (not V) was supplied.",
+                object.compartment, compartment_potential,
+            )
+        # Divide compartment_potential by 1000 to convert mV -> V.
+        # Faraday (kC/mol) * V = kJ/mol, matching the kJ/mol scale of deltaG.
         constant = (
             deltag * KCAL_TO_KJ
             + object.charge * Faraday * compartment_potential / 1000

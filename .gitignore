@@ -127,3 +127,10 @@ dmypy.json
 
 # Cursor workspace files
 *.code-workspace
+
+# Claude
+.claude/settings.local.json
+
+# claude-skills runtime artifacts (populated by `claude-skills sync`)
+.claude/commands/
+.claude/skills/

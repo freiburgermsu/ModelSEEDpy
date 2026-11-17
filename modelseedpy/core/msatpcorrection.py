@@ -106,7 +106,7 @@ class MSATPCorrection:
             self.modelutl = MSModelUtil.get(model_or_mdlutl)
         # Setting atpcorrection attribute in model utl so link is bidirectional
         self.modelutl.atputl = self
-        
+
         self.compartment = compartment
 
         if atp_hydrolysis_id and atp_hydrolysis_id in self.model.reactions:
@@ -119,7 +119,7 @@ class MSATPCorrection:
         # The medias passed in are kept: they used to be dropped, so a caller
         # that supplied its own medias and load_default_medias=False evaluated
         # none at all
-        self.atp_medias = list(atp_medias)
+        self.atp_medias = list(atp_medias or [])
 
         if load_default_medias:
             self.load_default_medias(default_media_path)
@@ -150,7 +150,6 @@ class MSATPCorrection:
         self.noncore_reactions = []
         self.other_compartments = []
         self.media_gapfill_stats = {}
-        self.media_evaluated = False      # set by evaluate_growth_media
         self.filtered_noncore = []
         self.lp_filename = None
         self.multiplier = 1.2
@@ -163,7 +162,7 @@ class MSATPCorrection:
                 default_target=self.atp_hydrolysis.id,
             )
         return self.msgapfill
-    
+
     def load_default_template(self):
         self.coretemplate = MSTemplateBuilder.from_dict(
             get_template("template_core"), None
@@ -178,7 +177,7 @@ class MSATPCorrection:
         filename = default_media_path
         medias = pd.read_csv(filename, sep="\t", index_col=0).to_dict()
         for media_id in medias:
-            if media_id not in ["name","msid"]: 
+            if media_id not in ["name", "msid"]:
                 media_d = {}
                 for exchange, v in medias[media_id].items():
                     if v > 0:
@@ -314,14 +313,13 @@ class MSATPCorrection:
                 gfrxn.lower_bound = 0
                 gfrxn.upper_bound = 0
 
-    def evaluate_growth_media(self,no_gapfilling=False):
+    def evaluate_growth_media(self, no_gapfilling=False):
         """
         Determines how much gap filling each input test media requires to make ATP
 
         :return:
         """
         self.disable_noncore_reactions()
-        self.media_evaluated = True
         self.media_gapfill_stats = {}
         self.get_msgapfill().default_gapfill_templates = [self.coretemplate]
         if self.lp_filename:
@@ -437,7 +435,15 @@ class MSATPCorrection:
             elif media in self.forced_media:
                 self.selected_media.append(media)
                 atp_att["selected_media"][media.id] = 0
-                
+
+        # A model where nothing qualified is protected by the empty-media test
+        # ALONE, which is a far weaker guarantee than the caller asked for. Say so,
+        # because the condition is otherwise invisible: build_tests() returns a
+        # one-element list and raises nothing. Reported by jplfaria in fork PR #76.
+        if not self.selected_media:
+            logger.warning(
+                "No ATP test media selected - only the empty media test will be applied!"
+            )
 
         self.modelutl.save_attributes(atp_att, "ATP_analysis")
 
@@ -457,7 +463,7 @@ class MSATPCorrection:
                 and MSGapfill.gapfill_count(self.media_gapfill_stats[media]) > 0
             ):
                 self.get_msgapfill().integrate_gapfill_solution(
-                    stats, self.cumulative_core_gapfilling,check_for_growth=False
+                    stats, self.cumulative_core_gapfilling, check_for_growth=False
                 )
                 # Adding reactions to gapfilling sensitivity structure so we can track all gapfilled reactions
                 gf_sensitivity = self.modelutl.get_attributes("gf_sensitivity", {})
@@ -569,12 +575,31 @@ class MSATPCorrection:
         Raises
         ------
         """
-        # Run the ATP media evaluation only if it has never run. An empty selected_media after
-        # an evaluation is a result (no test medium makes ATP in the core) -- re-running here
-        # would end in restore_noncore_reactions(), which resets every non-core reaction to its
-        # original bounds and so silently undoes expand_model_to_genome_scale's filtering.
-        if not self.selected_media and not self.media_evaluated:
-            logger.warning("ATP tests not yet computed - running without allowing for model changes!")
+        # Checking if ATP stats have been run yet and if not, running them.
+        #
+        # The test MUST be ``is None`` and not truthiness. ``selected_media``
+        # starts as None (never computed) and ``determine_growth_media`` sets it
+        # to a list before appending, so an EMPTY list means "computed, and no
+        # medium qualified" -- a real answer, not a missing one. Under the old
+        # truthiness test those two cases were indistinguishable, and the
+        # consequence was severe: ``run_atp_correction`` ends with
+        # ``return self.build_tests()``, i.e. AFTER
+        # ``expand_model_to_genome_scale`` has applied the ATP expansion filter
+        # by zeroing one direction of each cycle-forming reaction. When no
+        # medium had been selected this branch re-fired and its
+        # ``restore_noncore_reactions()`` wrote ``original_bounds`` back over
+        # every non-core reaction -- erasing that filter and returning
+        # energy-generating cycles to the delivered model, silently. Measured on
+        # KBDL builds: rxn08941_c0 went from blocked back to [-1000, 1000] and
+        # free ATP from 0 to 1000 (KBDLJobRunningPrototype#28, cause 2).
+        #
+        # With ``is None`` the branch still runs for a caller that asks for tests
+        # before any evaluation, which is its purpose, and no longer runs a
+        # second time at the end of ``run_atp_correction``.
+        if self.selected_media is None:
+            logger.warning(
+                "ATP tests not yet computed - running without allowing for model changes!"
+            )
             self.evaluate_growth_media(no_gapfilling=True)
             self.determine_growth_media()
             self.restore_noncore_reactions()
