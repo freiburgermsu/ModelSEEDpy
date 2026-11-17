@@ -22,14 +22,14 @@ def _model(with_loop=True, with_pump=False):
         m.add_reactions([r])
         return r
 
-    rxn("EX_A_e0", {"A": -1}, lb=-10, ub=0)            # A in
-    rxn("EX_C_e0", {"C": -1}, lb=0, ub=1000)            # C out
+    rxn("EX_A_e0", {"A": -1}, lb=-10, ub=0)  # A in
+    rxn("EX_C_e0", {"C": -1}, lb=0, ub=1000)  # C out
     rxn("R1", {"A": -1, "B": 1})
     rxn("R2", {"B": -1, "C": 1})
-    if with_loop:                                       # a cycle with no net conversion
+    if with_loop:  # a cycle with no net conversion
         rxn("L1", {"C": -1, "D": 1})
         rxn("L2", {"D": -1, "B": 1})
-    if with_pump:                                       # nothing -> X, through P/Q/R
+    if with_pump:  # nothing -> X, through P/Q/R
         rxn("P1", {"P": -1, "Q": -1, "X": 1, "R": 1})
         rxn("P2", {"R": -1, "P": 1, "Q": 1})
         rxn("EX_X_e0", {"X": -1}, lb=0, ub=1000)
@@ -47,18 +47,21 @@ def _max(m, rid, **params):
 def test_margin_blocks_internal_cycle(coupling):
     plain = _model()
     plain.objective = "L1"
-    assert plain.slim_optimize() == pytest.approx(1000)          # the cycle runs freely
+    assert plain.slim_optimize() == pytest.approx(1000)  # the cycle runs freely
     # eps = 0 is the old behaviour: all-zero potentials satisfy every row
     assert _max(_model(), "L1", dg_margin=0.0, coupling=coupling) == pytest.approx(1000)
     # any eps > 0 forbids the cycle; L1 may only carry flux the network actually needs (none)
-    assert _max(_model(), "L1", dg_margin=1.0, coupling=coupling) == pytest.approx(0, abs=1e-6)
+    assert _max(_model(), "L1", dg_margin=1.0, coupling=coupling) == pytest.approx(
+        0, abs=1e-6
+    )
 
 
 @pytest.mark.parametrize("coupling", ["revbin", "tmfa"])
 def test_margin_keeps_real_pathways(coupling):
     # A -> B -> C -> out is downhill all the way; the margin must not cost it any flux
-    assert _max(_model(with_loop=False), "EX_C_e0", dg_margin=1.0, coupling=coupling) \
-        == pytest.approx(10)
+    assert _max(
+        _model(with_loop=False), "EX_C_e0", dg_margin=1.0, coupling=coupling
+    ) == pytest.approx(10)
 
 
 @pytest.mark.parametrize("coupling", ["revbin", "tmfa"])
@@ -83,7 +86,7 @@ def test_tmfa_leaves_idle_reactions_unconstrained():
     rp.build_package({"dg_margin": 1.0, "coupling": "revbin"})
     rp.variables["dgp"]["R1"].lb = rp.variables["dgp"]["R1"].ub = 0
     r.objective = "EX_C_e0"
-    r.slim_optimize()                    # nan, not an exception
+    r.slim_optimize()  # nan, not an exception
     assert r.solver.status == "infeasible"
 
 
@@ -97,14 +100,28 @@ def test_build_package_without_arguments():
 
 def test_loader_leaves_no_estimate_marker_unknown():
     from modelseedpy.biochem.modelseed_biochem import _thermodynamics
+
     # eQuilibrator's marker: the energy is unknown, NOT dGPredictor's, which is on another scale
-    sam = {"thermodynamics": {"eQuilibrator": [132.52, 23901.43],
-                              "dGPredictor": [67.83, 8.41, 0.76]}}
+    sam = {
+        "thermodynamics": {
+            "eQuilibrator": [132.52, 23901.43],
+            "dGPredictor": [67.83, 8.41, 0.76],
+        }
+    }
     assert _thermodynamics(sam) == (None, None, None)
-    co2 = {"thermodynamics": {"eQuilibrator": [-92.26, 0.76], "dGPredictor": [-91.91, 2.09]}}
+    co2 = {
+        "thermodynamics": {
+            "eQuilibrator": [-92.26, 0.76],
+            "dGPredictor": [-91.91, 2.09],
+        }
+    }
     assert _thermodynamics(co2) == (-92.26, 0.76, "eQuilibrator")
-    unknown = {"thermodynamics": {"eQuilibrator": [27.8, 12482.4],
-                                  "Group contribution": [1e7, 1e7]}}
+    unknown = {
+        "thermodynamics": {
+            "eQuilibrator": [27.8, 12482.4],
+            "Group contribution": [1e7, 1e7],
+        }
+    }
     assert _thermodynamics(unknown) == (None, None, None)
     # no eQuilibrator entry at all still takes dGPredictor, as before
     only_dgp = {"thermodynamics": {"dGPredictor": [-40.0, 5.0]}}
@@ -128,9 +145,15 @@ def test_rebuild_with_another_coupling_replaces_the_rows():
     assert m.slim_optimize() == pytest.approx(0, abs=1e-6)
 
 
-@pytest.mark.parametrize("params", [{"dg_margin": 10000.0}, {"dg_margin": -1.0},
-                                    {"coupling": "tmfa", "flux_big_m": 0},
-                                    {"coupling": "tmfa", "flux_big_m": float("inf")}])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"dg_margin": 10000.0},
+        {"dg_margin": -1.0},
+        {"coupling": "tmfa", "flux_big_m": 0},
+        {"coupling": "tmfa", "flux_big_m": float("inf")},
+    ],
+)
 def test_bad_parameters_are_rejected(params):
     pkg = MSPackageManager.get_pkg_mgr(_model()).getpkg("SimpleThermoPkg")
     with pytest.raises(ValueError):
@@ -142,7 +165,8 @@ def test_tmfa_rejects_an_infinite_bound():
     m.reactions.R1.upper_bound = float("inf")
     with pytest.raises(ValueError, match="R1"):
         MSPackageManager.get_pkg_mgr(m).getpkg("SimpleThermoPkg").build_package(
-            {"coupling": "tmfa"})
+            {"coupling": "tmfa"}
+        )
 
 
 @pytest.mark.parametrize("coupling", ["revbin", "tmfa"])
@@ -167,11 +191,13 @@ def test_database_error_is_converted_to_kj(monkeypatch):
     class DB:
         compounds = Compounds(cpd1=Cpd(2.0), cpd2=Cpd(23901.43), cpd3=Cpd(None))
 
-    monkeypatch.setattr("modelseedpy.biochem.modelseed_biochem.ModelSEEDBiochem.get",
-                        staticmethod(lambda path=None: DB()))
+    monkeypatch.setattr(
+        "modelseedpy.biochem.modelseed_biochem.ModelSEEDBiochem.get",
+        staticmethod(lambda path=None: DB()),
+    )
     pkg = ft.FullThermoPkg.__new__(ft.FullThermoPkg)
     pkg.parameters = {"modelseed_db_path": None}
-    assert pkg.database_error("cpd1") == pytest.approx(2.0 * 4.184)   # kcal -> kJ
-    assert pkg.database_error("cpd2") is None                         # no-estimate marker
+    assert pkg.database_error("cpd1") == pytest.approx(2.0 * 4.184)  # kcal -> kJ
+    assert pkg.database_error("cpd2") is None  # no-estimate marker
     assert pkg.database_error("cpd3") is None
     assert pkg.database_error("cpdX") is None

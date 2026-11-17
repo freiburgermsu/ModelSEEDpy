@@ -89,11 +89,21 @@ class SimpleThermoPkg(BaseFBAPkg):
             self,
             model,
             "simple thermo",
-            {"potential": "metabolite", "dgp": "reaction", "zf": "reaction",
-             "zr": "reaction"},
-            {"thermo": "reaction", "dgpc": "reaction", "thermof": "reaction",
-             "thermor": "reaction", "zfc": "reaction", "zrc": "reaction",
-             "zexcl": "reaction"},
+            {
+                "potential": "metabolite",
+                "dgp": "reaction",
+                "zf": "reaction",
+                "zr": "reaction",
+            },
+            {
+                "thermo": "reaction",
+                "dgpc": "reaction",
+                "thermof": "reaction",
+                "thermor": "reaction",
+                "zfc": "reaction",
+                "zrc": "reaction",
+                "zexcl": "reaction",
+            },
         )
         self.pkgmgr.addpkgs(["RevBinPkg"])
 
@@ -111,12 +121,16 @@ class SimpleThermoPkg(BaseFBAPkg):
             },
         )
         if self.parameters["coupling"] not in ("revbin", "tmfa"):
-            raise ValueError(f"coupling must be 'revbin' or 'tmfa', "
-                             f"not {self.parameters['coupling']!r}")
+            raise ValueError(
+                f"coupling must be 'revbin' or 'tmfa', "
+                f"not {self.parameters['coupling']!r}"
+            )
         eps, M = self.parameters["dg_margin"], self.parameters["max_potential"]
         if not 0 <= eps < M:
-            raise ValueError(f"dg_margin must satisfy 0 <= dg_margin < max_potential "
-                             f"({M}), not {eps}")
+            raise ValueError(
+                f"dg_margin must satisfy 0 <= dg_margin < max_potential "
+                f"({M}), not {eps}"
+            )
         big = self.parameters["flux_big_m"]
         if big is not None and not (0 < big < float("inf")):
             raise ValueError(f"flux_big_m must be positive and finite, not {big}")
@@ -181,7 +195,9 @@ class SimpleThermoPkg(BaseFBAPkg):
         # dgp(i) = sum_j S(j,i) * p(j)       0 <= -dgp(i) + sum_j S(j,i) p(j) <= 0
         coef = {}
         for metabolite in object.metabolites:
-            coef[self.variables["potential"][metabolite.id]] = object.metabolites[metabolite]
+            coef[self.variables["potential"][metabolite.id]] = object.metabolites[
+                metabolite
+            ]
         coef[self.variables["dgp"][object.id]] = -1
         return self.build_constraint("dgpc", 0, 0, coef, object)
 
@@ -212,31 +228,44 @@ class SimpleThermoPkg(BaseFBAPkg):
         if big is None:
             big = max(abs(object.lower_bound), abs(object.upper_bound))
             if big == float("inf"):
-                raise ValueError(f"{object.id} has an infinite bound; set finite bounds or "
-                                 f"pass flux_big_m")
+                raise ValueError(
+                    f"{object.id} has an infinite bound; set finite bounds or "
+                    f"pass flux_big_m"
+                )
         dgp = self.variables["dgp"][object.id]
         has_f, has_r = object.upper_bound > 0, object.lower_bound < 0
         if has_f:
             zf = self.build_variable("zf", 0, 1, "binary", object)
-            self.build_constraint("zfc", None, 0,
-                                  {object.forward_variable: 1, zf: -big}, object)
+            self.build_constraint(
+                "zfc", None, 0, {object.forward_variable: 1, zf: -big}, object
+            )
             self.build_constraint("thermof", None, M, {dgp: 1, zf: M + eps}, object)
         if has_r:
             zr = self.build_variable("zr", 0, 1, "binary", object)
-            self.build_constraint("zrc", None, 0,
-                                  {object.reverse_variable: 1, zr: -big}, object)
+            self.build_constraint(
+                "zrc", None, 0, {object.reverse_variable: 1, zr: -big}, object
+            )
             self.build_constraint("thermor", -M, None, {dgp: 1, zr: -(M + eps)}, object)
         if has_f and has_r:
-            self.build_constraint("zexcl", None, 1, {self.variables["zf"][object.id]: 1,
-                                                     self.variables["zr"][object.id]: 1},
-                                  object)
+            self.build_constraint(
+                "zexcl",
+                None,
+                1,
+                {
+                    self.variables["zf"][object.id]: 1,
+                    self.variables["zr"][object.id]: 1,
+                },
+                object,
+            )
 
     def check_tolerance(self):
         """Warn when the solver cannot tell the margin apart from zero."""
         eps = self.parameters["dg_margin"]
         if eps <= 0:
-            logger.warning("SimpleThermoPkg: dg_margin is 0, so the loop-law rows exclude "
-                           "nothing (all-zero potentials satisfy them)")
+            logger.warning(
+                "SimpleThermoPkg: dg_margin is 0, so the loop-law rows exclude "
+                "nothing (all-zero potentials satisfy them)"
+            )
             return
         try:
             tau = self.model.solver.configuration.tolerances.integrality
@@ -247,18 +276,24 @@ class SimpleThermoPkg(BaseFBAPkg):
             logger.warning(
                 f"SimpleThermoPkg: integrality tolerance {tau:g} lets dgp slip by {slip:g}, "
                 f"not small against dg_margin {eps:g}; tighten the tolerance or lower "
-                f"max_potential")
+                f"max_potential"
+            )
         if self.parameters["coupling"] == "revbin":
-            big = 1000.0                      # RevBinPkg's fixed flux big-M
+            big = 1000.0  # RevBinPkg's fixed flux big-M
         else:
             big = self.parameters["flux_big_m"]
             if big is None:
-                big = max((max(abs(r.lower_bound), abs(r.upper_bound))
-                           for r in self.model.reactions
-                           if r.id in self.variables["zf"] or r.id in self.variables["zr"]),
-                          default=0.0)
+                big = max(
+                    (
+                        max(abs(r.lower_bound), abs(r.upper_bound))
+                        for r in self.model.reactions
+                        if r.id in self.variables["zf"] or r.id in self.variables["zr"]
+                    ),
+                    default=0.0,
+                )
         if tau * big >= 0.01:
             logger.warning(
                 f"SimpleThermoPkg: integrality tolerance {tau:g} lets an 'off' direction carry "
                 f"up to {tau * big:g} flux (big-M {big:g}); a loop can trickle through it. "
-                f"Tighten the tolerance or set IntegralityFocus")
+                f"Tighten the tolerance or set IntegralityFocus"
+            )

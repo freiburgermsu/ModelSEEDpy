@@ -13,7 +13,6 @@ from chemw import ChemMW
 import logging, time, re
 
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +81,6 @@ class FBAHelper:
                 reaction.lower_bound = 0
         reaction.update_variable_bounds()
 
-
     @staticmethod
     def modelseed_id_from_cobra_metabolite(metabolite):
         if re.search("^(cpd\d+)", metabolite.id):
@@ -114,8 +112,10 @@ class FBAHelper:
             chem_mw.mass(formula)
             return chem_mw.raw_mw
         except:
-            warn(f"The compound {metabolite.id} possesses an unconventional "
-                 f"formula {metabolite.formula}; hence, the MW cannot be computed.")
+            warn(
+                f"The compound {metabolite.id} possesses an unconventional "
+                f"formula {metabolite.formula}; hence, the MW cannot be computed."
+            )
             return 0
 
     @staticmethod
@@ -142,31 +142,40 @@ class FBAHelper:
 
     @staticmethod
     def isnumber(string):
-        if str(string) in ["nan", "inf", "True", "False"]:  return False
-        try:  float(string);  return True
-        except:  return False
+        if str(string) in ["nan", "inf", "True", "False"]:
+            return False
+        try:
+            float(string)
+            return True
+        except:
+            return False
 
     @staticmethod
     def rxn_mets_list(rxn):
-        return [met for met in rxn.reactants+rxn.products]
+        return [met for met in rxn.reactants + rxn.products]
 
     @staticmethod
-    def sum_dict(d1,d2):
+    def sum_dict(d1, d2):
         for key, value in d1.items():
-            if key in d2:  d2[key] += value
-            else:  d2[key] = value
+            if key in d2:
+                d2[key] += value
+            else:
+                d2[key] = value
         return d2
 
     @staticmethod
     def rxn_compartment(reaction):
         compartments = list(reaction.compartments)
         if len(compartments) == 0:
-            if re.search("(?<=\_)(\w\d+)", reaction.id):   return reaction.id.split("_")[-1]
+            if re.search("(?<=\_)(\w\d+)", reaction.id):
+                return reaction.id.split("_")[-1]
             agora_comp = re.compile("(?<=\[)(.+)(?=\])")
             hits = [agora_comp.search(met.id) for met in reaction.metabolites]
             compartments = [hit.group() for hit in hits if hit is not None]
-            if len(compartments) == 0:  return None
-        if len(compartments) == 1:  return compartments[0]
+            if len(compartments) == 0:
+                return None
+        if len(compartments) == 1:
+            return compartments[0]
         # reaction.compartments is a set, so the compartments are sorted before
         # choosing: returning whichever came first made the answer depend on the
         # hash seed, and with it which reactions ATP correction treats as noncore.
@@ -174,14 +183,18 @@ class FBAHelper:
         # wins, else the cytosol.
         cytosol = othercomp = None
         for comp in sorted(set(compartments)):
-            if comp[0:1] == "c":  cytosol = comp
-            elif comp[0:1] != "e":  othercomp = comp
+            if comp[0:1] == "c":
+                cytosol = comp
+            elif comp[0:1] != "e":
+                othercomp = comp
         return othercomp or cytosol
-    
+
     @staticmethod
     def clean_fluxes(sol_fluxes, tol=1e-8):
         if isinstance(sol_fluxes, dict):
-            cleaned_fluxes = {key: flux for key, flux in sol_fluxes.items() if abs(flux) >= tol}
+            cleaned_fluxes = {
+                key: flux for key, flux in sol_fluxes.items() if abs(flux) >= tol
+            }
         else:
             cleaned_fluxes = sol_fluxes.copy()
             cleaned_fluxes[abs(cleaned_fluxes) < tol] = 0
@@ -202,7 +215,8 @@ class FBAHelper:
 
     @staticmethod
     def mediaName(media):
-        if media == None:  return "Complete"
+        if media == None:
+            return "Complete"
         return media.id
 
     @staticmethod
@@ -227,7 +241,7 @@ class FBAHelper:
         if hasattr(kbase_model, "id"):
             reframed_model.id = kbase_model.id
         for comp in reframed_model.compartments:
-            if 'e' in comp:
+            if "e" in comp:
                 reframed_model.compartments[comp].external = True
 
         return reframed_model
@@ -247,6 +261,7 @@ class FBAHelper:
         if isinstance(df, tuple):
             return df
         from collections import namedtuple
+
         dataframe = namedtuple("DataFrame", ("index", "columns", "values"))
         df.dropna(inplace=True)
         values = df.to_numpy()
@@ -256,16 +271,19 @@ class FBAHelper:
 
     @staticmethod
     def solution_to_dict(solution):
-        return {key:flux for key, flux in solution.fluxes.items()}
-    
+        return {key: flux for key, flux in solution.fluxes.items()}
+
     @staticmethod
     def solution_to_rxns_dict(solution, model):
-        return {model.reactions.get_by_id(key):flux for key, flux in solution.fluxes.items()}
-        
+        return {
+            model.reactions.get_by_id(key): flux
+            for key, flux in solution.fluxes.items()
+        }
+
     @staticmethod
     def solution_to_variables_dict(solution, model):
-        return {model.variables.get(key):flux for key, flux in solution.fluxes.items()}
-    
+        return {model.variables.get(key): flux for key, flux in solution.fluxes.items()}
+
     @staticmethod
     def remove_media_compounds(media_dict, compounds, printing=True):
         edited_dic = media_dict.copy()
@@ -288,5 +306,11 @@ class FBAHelper:
     @staticmethod
     def convert_kbase_media(kbase_media, uniform_uptake=1000):
         if uniform_uptake is None:
-            return {"EX_"+exID: -bound[0] for exID, bound in kbase_media.get_media_constraints().items()}
-        return {"EX_"+exID: uniform_uptake for exID in kbase_media.get_media_constraints().keys()}
+            return {
+                "EX_" + exID: -bound[0]
+                for exID, bound in kbase_media.get_media_constraints().items()
+            }
+        return {
+            "EX_" + exID: uniform_uptake
+            for exID in kbase_media.get_media_constraints().keys()
+        }

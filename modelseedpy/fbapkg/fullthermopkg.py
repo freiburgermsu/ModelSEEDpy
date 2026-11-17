@@ -74,8 +74,14 @@ class FullThermoPkg(BaseFBAPkg):
             self,
             model,
             "full thermo",
-            {"logconc": "metabolite", "pdgerr": "metabolite","ndgerr": "metabolite", "pconcfit": "metabolite", "nconcfit": "metabolite"},
-            {"potc": "metabolite","concfit": "metabolite"},
+            {
+                "logconc": "metabolite",
+                "pdgerr": "metabolite",
+                "ndgerr": "metabolite",
+                "pconcfit": "metabolite",
+                "nconcfit": "metabolite",
+            },
+            {"potc": "metabolite", "concfit": "metabolite"},
         )
         self.pkgmgr.addpkgs(["SimpleThermoPkg"])
 
@@ -90,8 +96,8 @@ class FullThermoPkg(BaseFBAPkg):
                 "custom_concentrations": {},
                 "custom_deltaG_error": {"cpd00067": 0},
                 "compartment_potential": {
-                    "e0": 0,    # mV — extracellular MUST be the zero reference for compartment electrochemical potential (so community modeling works)
-                    "c0": -160, # mV = 0.33*(pHint - pHext) - 143.33 where pHint=7, pHext=6.5
+                    "e0": 0,  # mV — extracellular MUST be the zero reference for compartment electrochemical potential (so community modeling works)
+                    "c0": -160,  # mV = 0.33*(pHint - pHext) - 143.33 where pHint=7, pHext=6.5
                 },
                 "temperature": 298,  # K
                 "filter": None,
@@ -133,7 +139,7 @@ class FullThermoPkg(BaseFBAPkg):
             "min_potential": -self.parameters["max_potential"],
             "max_potential": self.parameters["max_potential"],
             "dgbin": self.parameters["dgbin"],
-            "exclude_reactions": self.parameters["exclude_reactions"]
+            "exclude_reactions": self.parameters["exclude_reactions"],
         }
         if self.parameters["infeasible_model"]:
             simple_thermo_parameters["dgbin"] = True
@@ -209,9 +215,9 @@ class FullThermoPkg(BaseFBAPkg):
         interface. GLPK, SCIPY, and the hybrid interface are not QP-capable
         (see build_concfit_objective_l2 for why this matters)."""
         interface_name = getattr(self.model.solver.interface, "__name__", "")
-        return interface_name.startswith("optlang.gurobi_interface") or interface_name.startswith(
-            "optlang.cplex_interface"
-        )
+        return interface_name.startswith(
+            "optlang.gurobi_interface"
+        ) or interface_name.startswith("optlang.cplex_interface")
 
     def _require_qp_capable_solver(self):
         if not self._is_qp_capable_solver():
@@ -223,7 +229,7 @@ class FullThermoPkg(BaseFBAPkg):
     def build_concfit_objective(self, target_concentrations, weights=None):
         weights = weights or {}
         self._validate_concfit_weights(weights)
-        #Removing all existing concfit constraints
+        # Removing all existing concfit constraints
         for metabolite in self.model.metabolites:
             if metabolite.id in self.constraints["concfit"]:
                 self.model.remove_cons_vars(self.constraints["concfit"][metabolite.id])
@@ -236,7 +242,15 @@ class FullThermoPkg(BaseFBAPkg):
                 if metabolite.id not in self.variables["nconcfit"]:
                     self.build_variable("nconcfit", 0, 100, "continuous", metabolite)
                 self.build_constraint(
-                    "concfit", target_concentrations[metabolite.id], target_concentrations[metabolite.id], {self.variables["pconcfit"][metabolite.id]:1,self.variables["nconcfit"][metabolite.id]:-1,self.variables["logconc"][metabolite.id]:1}, metabolite
+                    "concfit",
+                    target_concentrations[metabolite.id],
+                    target_concentrations[metabolite.id],
+                    {
+                        self.variables["pconcfit"][metabolite.id]: 1,
+                        self.variables["nconcfit"][metabolite.id]: -1,
+                        self.variables["logconc"][metabolite.id]: 1,
+                    },
+                    metabolite,
                 )
                 objcoefs[self.variables["pconcfit"][metabolite.id]] = w
                 objcoefs[self.variables["nconcfit"][metabolite.id]] = w
@@ -254,7 +268,6 @@ class FullThermoPkg(BaseFBAPkg):
             Zero, direction="min", sloppy=True
         )
         self.model.objective.set_linear_coefficients(objvars)
-
 
     def build_concfit_objective_l2(self, target_concentrations, weights=None):
         """Weighted least-squares concentration-fit objective:
@@ -292,10 +305,15 @@ class FullThermoPkg(BaseFBAPkg):
 
         objvars = []
         for metabolite in self.model.metabolites:
-            if metabolite.id in target_concentrations and metabolite.id in self.variables["logconc"]:
+            if (
+                metabolite.id in target_concentrations
+                and metabolite.id in self.variables["logconc"]
+            ):
                 w = weights.get(metabolite.id, 1.0)
                 target = target_concentrations[metabolite.id]
-                objvars.append(w * (self.variables["logconc"][metabolite.id] - target) ** 2)
+                objvars.append(
+                    w * (self.variables["logconc"][metabolite.id] - target) ** 2
+                )
         self.model.objective = self.model.problem.Objective(
             add(objvars), direction="min", sloppy=True
         )
@@ -312,10 +330,8 @@ class FullThermoPkg(BaseFBAPkg):
         if msid in self.parameters["combined_custom_concentrations"]:
             lb = ln(self.parameters["combined_custom_concentrations"][msid][0])
             ub = ln(self.parameters["combined_custom_concentrations"][msid][1])
-        return self.build_variable(
-            "logconc", lb, ub, "continuous", object
-        )
-    
+        return self.build_variable("logconc", lb, ub, "continuous", object)
+
     def build_dgerr_variables(self, object):
         msid = self.modelutl.metabolite_msid(object)
         ub = self.parameters["default_max_error"]
@@ -335,18 +351,15 @@ class FullThermoPkg(BaseFBAPkg):
             ub = self.parameters["custom_deltaG_error"][msid]
         elif object.id in self.parameters["custom_deltaG_error"]:
             ub = self.parameters["custom_deltaG_error"][object.id]
-        self.build_variable(
-            "pdgerr", 0, ub, "continuous", object
-        )
-        self.build_variable(
-            "ndgerr", 0, ub, "continuous", object
-        )
-    
+        self.build_variable("pdgerr", 0, ub, "continuous", object)
+        self.build_variable("ndgerr", 0, ub, "continuous", object)
+
     def database_error(self, msid):
         """The error the database reports for a compound's formation energy."""
         if msid is None:
             return None
         from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+
         if self.parameters["modelseed_db_path"] is not None:
             biochem_db = ModelSEEDBiochem.get(path=self.parameters["modelseed_db_path"])
         else:
@@ -356,15 +369,11 @@ class FullThermoPkg(BaseFBAPkg):
         error = getattr(biochem_db.compounds.get_by_id(msid), "delta_g_error", None)
         if error is None or abs(error) >= NO_ESTIMATE_ERROR:
             return None
-        return abs(error) * KCAL_TO_KJ        # kcal/mol in the database, kJ/mol here
+        return abs(error) * KCAL_TO_KJ  # kcal/mol in the database, kJ/mol here
 
     def build_concfit_variables(self, object):
-        self.build_variable(
-            "pconcfit", 0, 100, "continuous", object
-        )
-        self.build_variable(
-            "nconcfit", 0, 100, "continuous", object
-        )
+        self.build_variable("pconcfit", 0, 100, "continuous", object)
+        self.build_variable("nconcfit", 0, 100, "continuous", object)
 
     def build_gibbs_constraint(self, object):
         msid = self.modelutl.metabolite_msid(object)
@@ -373,32 +382,40 @@ class FullThermoPkg(BaseFBAPkg):
         #                         + charge(i) * Faraday(kC/mol) * compartment_potential(mV) / 1000
         # compartment_potential is in mV throughout (build_package default: e0=0 mV, c0=-160 mV).
         # Dividing by 1000 converts mV -> V so that kC/mol * V = kJ/mol.
-        if object.id not in self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"]:
+        if (
+            object.id
+            not in self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"]
+        ):
             return None
 
         pos_deltagerr_variable = self.variables["pdgerr"][object.id]
         neg_deltagerr_variable = self.variables["ndgerr"][object.id]
-        potential_variable = self.pkgmgr.getpkg("SimpleThermoPkg").variables["potential"][object.id]
+        potential_variable = self.pkgmgr.getpkg("SimpleThermoPkg").variables[
+            "potential"
+        ][object.id]
 
-        #First check if compound has a deltaG value in the model
+        # First check if compound has a deltaG value in the model
         deltag = None
-        if object.notes and 'deltag' in object.notes:
-            deltag = object.notes['deltag']
+        if object.notes and "deltag" in object.notes:
+            deltag = object.notes["deltag"]
         elif msid is not None:
             from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+
             if self.parameters["modelseed_db_path"] is not None:
-                biochem_db =  ModelSEEDBiochem.get(path=self.parameters["modelseed_db_path"])
+                biochem_db = ModelSEEDBiochem.get(
+                    path=self.parameters["modelseed_db_path"]
+                )
             else:
-                biochem_db =  ModelSEEDBiochem.get()
+                biochem_db = ModelSEEDBiochem.get()
             mscpd = None
             if msid in biochem_db.compounds:
                 mscpd = biochem_db.compounds.get_by_id(msid)
             if mscpd is not None:
-                if hasattr(mscpd, 'deltag') and mscpd.deltag is not None:
+                if hasattr(mscpd, "deltag") and mscpd.deltag is not None:
                     deltag = mscpd.deltag
-                elif hasattr(mscpd, 'delta_g') and mscpd.delta_g is not None:
-                    deltag= mscpd.delta_g
-        RValue = 0.008314 # kJ/mol/K
+                elif hasattr(mscpd, "delta_g") and mscpd.delta_g is not None:
+                    deltag = mscpd.delta_g
+        RValue = 0.008314  # kJ/mol/K
         if deltag is not None and abs(deltag) >= UNKNOWN_DELTAG:
             # ModelSEED marks an unknown formation energy with 10000000 rather
             # than a null. Taken literally it puts the compound's potential far
@@ -410,14 +427,22 @@ class FullThermoPkg(BaseFBAPkg):
         if abs(deltag) * KCAL_TO_KJ >= self.parameters["max_potential"]:
             # e.g. the mycobacterial arabinogalactans, to -15,565 kJ/mol: pinning one outside
             # the potential bounds makes the model infeasible, so it is left free instead
-            logger.debug(f"FullThermoPkg: {object.id} formation energy {deltag} kcal/mol is "
-                         f"beyond max_potential; its potential is left free")
+            logger.debug(
+                f"FullThermoPkg: {object.id} formation energy {deltag} kcal/mol is "
+                f"beyond max_potential; its potential is left free"
+            )
             return None
         if msid == "cpd00067":
             # pH-7-transformed energies: add RT ln(1e-7) back for H+ so its concentration term
             # cancels at pH 7. RT is kJ/mol and deltag is still kcal/mol here, hence the division.
-            deltag += -1 * RValue * self.parameters["temperature"] * np.log(0.0000001) / KCAL_TO_KJ
-        Faraday = 96.485 # kC/mol
+            deltag += (
+                -1
+                * RValue
+                * self.parameters["temperature"]
+                * np.log(0.0000001)
+                / KCAL_TO_KJ
+            )
+        Faraday = 96.485  # kC/mol
         compartment_potential = 0
         if object.compartment in self.parameters["compartment_potential"]:
             compartment_potential = self.parameters["compartment_potential"][
@@ -433,20 +458,21 @@ class FullThermoPkg(BaseFBAPkg):
             logger.warning(
                 "compartment_potential for '%s' is %.1f mV, which is egregiously "
                 "non-physical (|V| > 1000 mV). Verify units — expected mV.",
-                object.compartment, compartment_potential,
+                object.compartment,
+                compartment_potential,
             )
         elif abs_cp > 300:
             logger.warning(
                 "compartment_potential for '%s' is %.1f mV, which is unusually large "
                 "(|V| > 300 mV). Typical biological membrane potentials sit well under "
                 "300 mV; verify that mV (not V) was supplied.",
-                object.compartment, compartment_potential,
+                object.compartment,
+                compartment_potential,
             )
         # Divide compartment_potential by 1000 to convert mV -> V.
         # Faraday (kC/mol) * V = kJ/mol, matching the kJ/mol scale of deltaG.
         constant = (
-            deltag * KCAL_TO_KJ
-            + object.charge * Faraday * compartment_potential / 1000
+            deltag * KCAL_TO_KJ + object.charge * Faraday * compartment_potential / 1000
         )
         coef = {
             potential_variable: 1,
@@ -454,7 +480,7 @@ class FullThermoPkg(BaseFBAPkg):
             neg_deltagerr_variable: 1,
         }
         if msid != "cpd00001":  # Water concentration should not contribute to potential
-            coef[self.variables["logconc"][object.id]] = -1 * RValue * self.parameters["temperature"]
-        return self.build_constraint(
-            "potc", constant, constant, coef, object
-        )
+            coef[self.variables["logconc"][object.id]] = (
+                -1 * RValue * self.parameters["temperature"]
+            )
+        return self.build_constraint("potc", constant, constant, coef, object)

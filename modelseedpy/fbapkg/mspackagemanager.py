@@ -8,6 +8,7 @@ import inspect
 
 class PackageError(Exception):
     """Error in package manager"""
+
     pass
 
 

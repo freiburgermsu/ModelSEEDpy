@@ -80,7 +80,7 @@ from modelseedpy.fbapkg import (
     ElementUptakePkg,
     ElementClosurePkg,
     ReactionActivationPkg,
-    ExpressionActivationPkg
+    ExpressionActivationPkg,
 )
 
 from modelseedpy.multiomics import MSExpression

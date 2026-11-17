@@ -4,6 +4,7 @@ from __future__ import absolute_import
 from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 import logging
 
+
 class ElementUptakePkg(BaseFBAPkg):
     def __init__(self, model):
         BaseFBAPkg.__init__(

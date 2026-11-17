@@ -13,8 +13,13 @@ def _toy(pump=True, biomass=True):
     placeholder-formula polymer P (formula 'R') made from 2 S."""
     m = cobra.Model("toy")
     M = lambda i, f, q=0: cobra.Metabolite(i, formula=f, charge=q, compartment="c0")
-    mets = {"S": M("S_c0", "CO2"), "A": M("A_c0", "C2H4O2"), "B": M("B_c0", "CH4"),
-            "P": M("P_c0", "R"), "T": M("cpd11416_c0", "")}
+    mets = {
+        "S": M("S_c0", "CO2"),
+        "A": M("A_c0", "C2H4O2"),
+        "B": M("B_c0", "CH4"),
+        "P": M("P_c0", "R"),
+        "T": M("cpd11416_c0", ""),
+    }
     # make B + S = A in atoms so r1 balances: B = C2H4O2 - CO2 = CH4 (hydrogen differs; give A
     # C2H4O2 and B CH4O0 -> pick A = C2H4O2, B = CH4 means r1 balances C and H but not O:
     # set B = C1H4 and S = CO2, A = C2H4O2 -> r1: C2H4O2 -> CH4 + CO2 : C2 H4 O2 -> C2 H4 O2 ok
@@ -27,17 +32,21 @@ def _toy(pump=True, biomass=True):
 
     rxn("EX_S_e0", {"S": -1}, lb=-1, ub=1000)
     if pump:
-        rxn("r1", {"A": -1, "B": 1, "S": 1})          # balanced
-        rxn("r2", {"B": -1, "A": 1})                  # creates CO2 worth of atoms
+        rxn("r1", {"A": -1, "B": 1, "S": 1})  # balanced
+        rxn("r2", {"B": -1, "A": 1})  # creates CO2 worth of atoms
     if biomass:
-        rxn("Psyn", {"S": -2, "P": 1})                # P's content = 2 CO2
+        rxn("Psyn", {"S": -2, "P": 1})  # P's content = 2 CO2
         rxn("bio1", {"P": -1, "T": 1})
         rxn("SK_cpd11416_c0", {"T": -1})
     return m
 
 
 def _close(m, **params):
-    return MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg").build_package(params)
+    return (
+        MSPackageManager.get_pkg_mgr(m)
+        .getpkg("ElementClosurePkg")
+        .build_package(params)
+    )
 
 
 def _max(m, rid):
@@ -50,13 +59,13 @@ def test_formula_parsing():
     assert formula_atoms("C4H5N2O3R2") is None
     assert formula_atoms("C4H5N2O3R2", strip_r=True) == {"C": 4, "H": 5, "N": 2, "O": 3}
     assert formula_atoms("C62H90CoN13O14PR", strip_r=True)["Co"] == 1
-    assert formula_atoms("RbCl") == {"Rb": 1, "Cl": 1}          # Rb is not an R group
+    assert formula_atoms("RbCl") == {"Rb": 1, "Cl": 1}  # Rb is not an R group
     assert formula_atoms("") is None
 
 
 def test_pump_exports_carbon_without_closure_and_not_with_it():
     m = _toy(biomass=False)
-    assert _max(m, "EX_S_e0") == pytest.approx(1000)            # carbon out of nothing
+    assert _max(m, "EX_S_e0") == pytest.approx(1000)  # carbon out of nothing
     m = _toy(biomass=False)
     _close(m)
     assert _max(m, "EX_S_e0") == pytest.approx(0, abs=1e-7)
@@ -64,7 +73,7 @@ def test_pump_exports_carbon_without_closure_and_not_with_it():
 
 def test_biomass_loophole_is_closed():
     # without closure the pump feeds biomass without limit
-    assert _max(_toy(), "bio1") == pytest.approx(500.5)        # (1000 pump + 1 uptake) / 2
+    assert _max(_toy(), "bio1") == pytest.approx(500.5)  # (1000 pump + 1 uptake) / 2
     # exchange-only closure (biomass not counted) still lets pump carbon into biomass
     m = _toy()
     _close(m, biomass_reactions=[])
@@ -79,7 +88,7 @@ def test_biomass_loophole_is_closed():
 def test_real_pathway_is_untouched():
     m = _toy(pump=False)
     _close(m)
-    assert _max(m, "bio1") == pytest.approx(0.5)                # same as with no closure
+    assert _max(m, "bio1") == pytest.approx(0.5)  # same as with no closure
     m2 = _toy(pump=False)
     assert _max(m2, "bio1") == pytest.approx(0.5)
 
@@ -94,7 +103,9 @@ def test_creation_report_and_curation_targets():
     m = _toy(biomass=False)
     pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
     pkg.build_package({"elements": ("C", "O")})
-    m.remove_cons_vars([pkg.constraints["closure"][k] for k in list(pkg.constraints["closure"])])
+    m.remove_cons_vars(
+        [pkg.constraints["closure"][k] for k in list(pkg.constraints["closure"])]
+    )
     m.objective = "EX_S_e0"
     sol = m.optimize()
     made = pkg.creation(sol.fluxes)
@@ -104,7 +115,7 @@ def test_creation_report_and_curation_targets():
 
 def test_all_elements_and_charge_rows():
     m = _toy()
-    m.metabolites.S_c0.charge = -1                       # give the boundary a charge to close
+    m.metabolites.S_c0.charge = -1  # give the boundary a charge to close
     info = _close(m, elements="all", charge=True)
     assert set(info["rows"]) == {"C", "O", "charge"}
 
@@ -120,8 +131,15 @@ def test_closure_terms_match_built_rows():
     for key, row in terms.items():
         con = pkg2.constraints["closure"][key]
         lin = con.get_linear_coefficients(
-            [v for rid in row for v in (pkg2.model.reactions.get_by_id(rid).forward_variable,
-                                        pkg2.model.reactions.get_by_id(rid).reverse_variable)])
+            [
+                v
+                for rid in row
+                for v in (
+                    pkg2.model.reactions.get_by_id(rid).forward_variable,
+                    pkg2.model.reactions.get_by_id(rid).reverse_variable,
+                )
+            ]
+        )
         for rid, c in row.items():
             r = pkg2.model.reactions.get_by_id(rid)
             assert lin[r.forward_variable] == pytest.approx(c)
@@ -130,8 +148,9 @@ def test_closure_terms_match_built_rows():
 
 def test_default_closes_every_element_present(caplog):
     from modelseedpy.fbapkg.elementclosurepkg import DEFAULT_ELEMENTS
+
     assert DEFAULT_ELEMENTS == "all"
-    assert set(_close(_toy())["rows"]) == {"C", "O"}          # all the toy's boundary holds
+    assert set(_close(_toy())["rows"]) == {"C", "O"}  # all the toy's boundary holds
     # an explicit element the boundary lacks gets no row, and a warning says so
     assert set(_close(_toy(), elements="C,H,O")["rows"]) == {"C", "O"}
     assert any("contains H" in r.message for r in caplog.records)
@@ -139,12 +158,13 @@ def test_default_closes_every_element_present(caplog):
 
 def test_parse_elements():
     from modelseedpy.fbapkg.elementclosurepkg import parse_elements, DEFAULT_ELEMENTS
+
     assert parse_elements(None) == DEFAULT_ELEMENTS
     assert parse_elements("all") == "all" and parse_elements(" ALL ") == "all"
     assert parse_elements(["all"]) == "all"
     assert parse_elements("C,H,O,N") == ("C", "H", "O", "N")
     assert parse_elements("C H  O;N") == ("C", "H", "O", "N")
-    assert parse_elements(("Co", "Fe", "Co")) == ("Co", "Fe")       # duplicates dropped
+    assert parse_elements(("Co", "Fe", "Co")) == ("Co", "Fe")  # duplicates dropped
     for bad in ("CO", "Xx", "c", "", ",", ["C", "Q"]):
         with pytest.raises(ValueError):
             parse_elements(bad)
@@ -161,8 +181,11 @@ def _nitrogen_maker():
     m = cobra.Model("n")
     X = cobra.Metabolite("X_c0", formula="CH", compartment="c0")
     Y = cobra.Metabolite("Y_c0", formula="CHN", compartment="c0")
-    for rid, st, lb, ub in (("EX_X_e0", {X: -1}, -1, 1000), ("r", {X: -1, Y: 1}, 0, 1000),
-                            ("EX_Y_e0", {Y: -1}, 0, 1000)):
+    for rid, st, lb, ub in (
+        ("EX_X_e0", {X: -1}, -1, 1000),
+        ("r", {X: -1, Y: 1}, 0, 1000),
+        ("EX_Y_e0", {Y: -1}, 0, 1000),
+    ):
         r = cobra.Reaction(rid, lower_bound=lb, upper_bound=ub)
         r.add_metabolites(st)
         m.add_reactions([r])
@@ -172,7 +195,7 @@ def _nitrogen_maker():
 def test_carbon_hydrogen_oxygen_leave_nitrogen_open_the_default_closes_it():
     m = _nitrogen_maker()
     _close(m, elements="C,H,O")
-    assert _max(m, "EX_Y_e0") == pytest.approx(1)             # N made from nothing passes
+    assert _max(m, "EX_Y_e0") == pytest.approx(1)  # N made from nothing passes
     for spec in ("C,H,O,N", "all", None):
         m = _nitrogen_maker()
         _close(m, elements=spec)
@@ -185,12 +208,12 @@ def test_rebuild_with_fewer_elements_replaces_the_rows():
     pkg.build_package({"elements": "all"})
     assert set(pkg.constraints["closure"]) == {"C", "H", "N"}
     assert _max(m, "EX_Y_e0") == pytest.approx(0, abs=1e-9)
-    info = pkg.build_package({"elements": "C,H,O"})            # C, H, O (no O here)
+    info = pkg.build_package({"elements": "C,H,O"})  # C, H, O (no O here)
     assert set(info["rows"]) == {"C", "H"}
     assert set(pkg.constraints["closure"]) == {"C", "H"}
     names = {c.name for c in m.constraints if c.name.endswith("_closure")}
-    assert names == {"C_closure", "H_closure"}                 # the N row is gone from the model
-    assert _max(m, "EX_Y_e0") == pytest.approx(1)             # so N may be created again
+    assert names == {"C_closure", "H_closure"}  # the N row is gone from the model
+    assert _max(m, "EX_Y_e0") == pytest.approx(1)  # so N may be created again
 
 
 def test_closure_terms_twice_on_one_model():
@@ -199,11 +222,10 @@ def test_closure_terms_twice_on_one_model():
     a = pkg.closure_terms({"elements": "all"})
     b = pkg.closure_terms({})
     assert set(a) == {"C", "O"} and set(b) == {"C", "O"}
-    assert pkg.terms == {}                      # closure_terms alone changes nothing reported
+    assert pkg.terms == {}  # closure_terms alone changes nothing reported
     pkg.build_package({"elements": "all"})
     pkg.closure_terms({"elements": ["C"]})
-    assert set(pkg.terms) == {"C", "O"}         # still what is built
-
+    assert set(pkg.terms) == {"C", "O"}  # still what is built
 
 
 def test_failed_rebuild_keeps_the_rows():
@@ -221,15 +243,23 @@ def test_rebuild_after_rows_left_with_block():
     pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
     with m:
         pkg.build_package({"elements": "all"})
-    pkg.build_package({"elements": "C,H,N"})                  # used to raise LookupError
-    assert {c.name for c in m.constraints if c.name.endswith("_closure")} == \
-        {"C_closure", "H_closure", "N_closure"}
+    pkg.build_package({"elements": "C,H,N"})  # used to raise LookupError
+    assert {c.name for c in m.constraints if c.name.endswith("_closure")} == {
+        "C_closure",
+        "H_closure",
+        "N_closure",
+    }
 
 
 def test_foreign_closure_named_constraint_survives():
     m = _toy()
-    m.add_cons_vars([m.problem.Constraint(m.reactions.EX_S_e0.flux_expression, lb=-10,
-                                          name="uptake_closure")])
+    m.add_cons_vars(
+        [
+            m.problem.Constraint(
+                m.reactions.EX_S_e0.flux_expression, lb=-10, name="uptake_closure"
+            )
+        ]
+    )
     pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
     pkg.build_package({})
     pkg.build_package({"elements": "C"})
@@ -242,11 +272,12 @@ def test_charge_only_closure():
     info = _close(m, elements=[], charge=True)
     assert info["rows"] == ["charge"]
     with pytest.raises(ValueError):
-        _close(_toy(), elements=[])                           # nothing to build
+        _close(_toy(), elements=[])  # nothing to build
 
 
 def test_parse_elements_edge_cases():
     from modelseedpy.fbapkg.elementclosurepkg import parse_elements
+
     assert parse_elements([]) == ()
     assert parse_elements(["C, H", "O"]) == ("C", "H", "O")
     for bad in (5, 1.5, b"CHO", "all,C", ["all", "C"], "   "):

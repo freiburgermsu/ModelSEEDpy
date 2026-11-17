@@ -61,29 +61,31 @@ ALIAS_MODELS = {
     "TS_Athaliana",
 }
 
+
 def convert_to_searchname(name):
     OriginalName = name
-    ending = "";
+    ending = ""
     if name[-1] == "-":
         ending = "-"
     name = name.lower()
-    name.replace(" ","")
-    name.replace(",","")
-    name.replace("-","")
-    name.replace("_","")
-    name.replace("(","")
-    name.replace(")","")
-    name.replace("}","")
-    name.replace("{","")
-    name.replace("[","")
-    name.replace("]","")
-    name.replace(":","")
-    name.replace("�","")
-    name.replace("'","")
-    name.replace("_","")
+    name.replace(" ", "")
+    name.replace(",", "")
+    name.replace("-", "")
+    name.replace("_", "")
+    name.replace("(", "")
+    name.replace(")", "")
+    name.replace("}", "")
+    name.replace("{", "")
+    name.replace("[", "")
+    name.replace("]", "")
+    name.replace(":", "")
+    name.replace("�", "")
+    name.replace("'", "")
+    name.replace("_", "")
     name += ending
-    name.replace("icacid","ate")
-    return name;
+    name.replace("icacid", "ate")
+    return name
+
 
 def get_low(ids):
     low = None
@@ -254,8 +256,8 @@ PKA_SOURCES = ("Marvin", "Literature", "MolGpKa")
 # compound by compound moves reaction energies by hundreds of kJ/mol (rxn01406 comes out +370
 # kJ/mol against the database's own -176). A compound eQuilibrator has no entry for at all still
 # takes dGPredictor's, as before.
-UNKNOWN_DELTAG = 1e6          # kcal/mol; ModelSEED stores 10000000
-NO_ESTIMATE_ERROR = 1000.0    # kcal/mol; eQuilibrator's marker is >= 12,482
+UNKNOWN_DELTAG = 1e6  # kcal/mol; ModelSEED stores 10000000
+NO_ESTIMATE_ERROR = 1000.0  # kcal/mol; eQuilibrator's marker is >= 12,482
 NO_ESTIMATE_SOURCES = ("eQuilibrator",)
 
 
@@ -275,8 +277,11 @@ def _thermodynamics(record):
         error = values[1] if len(values) > 1 else None
         if abs(values[0]) >= UNKNOWN_DELTAG:
             return None, None, None
-        if (source in NO_ESTIMATE_SOURCES and error is not None
-                and abs(error) >= NO_ESTIMATE_ERROR):
+        if (
+            source in NO_ESTIMATE_SOURCES
+            and error is not None
+            and abs(error) >= NO_ESTIMATE_ERROR
+        ):
             return None, None, None
         return values[0], error, source
     return None, None, None
@@ -333,7 +338,7 @@ def _load_metabolites(
                             pka,
                             pkb,
                             o.get("source"),
-                            pathways=o.get('pathways')
+                            pathways=o.get("pathways"),
                         )
                         cpd.delta_g_source = delta_g_source
                         if cpd.id in aliases:
@@ -651,7 +656,7 @@ class ModelSEEDBiochem:
     default_biochemistry = None
 
     @staticmethod
-    def get(create_if_missing=True,path=config.get("biochem", "path")):
+    def get(create_if_missing=True, path=config.get("biochem", "path")):
         if not ModelSEEDBiochem.default_biochemistry:
             print("loading biochemistry database from", path)
             ModelSEEDBiochem.default_biochemistry = from_local(path)

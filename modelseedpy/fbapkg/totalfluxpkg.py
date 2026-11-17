@@ -29,7 +29,9 @@ class TotalFluxPkg(BaseFBAPkg):
                     )
                     self.model.add_cons_vars(self.variables["tf"][reaction.id])
                     self.constraints["tf"][reaction.id] = self.model.problem.Constraint(
-                        reaction.forward_variable + reaction.reverse_variable - self.variables["tf"][reaction.id],
+                        reaction.forward_variable
+                        + reaction.reverse_variable
+                        - self.variables["tf"][reaction.id],
                         lb=0,
                         ub=0,
                         name=reaction.id + "_tf",

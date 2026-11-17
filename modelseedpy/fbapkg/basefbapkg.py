@@ -28,9 +28,12 @@ class BaseFBAPkg:
     Base class for FBA packages
     """
 
-    def __init__(self, model, name, variable_types={}, constraint_types={}, reaction_types={}):
+    def __init__(
+        self, model, name, variable_types={}, constraint_types={}, reaction_types={}
+    ):
         # Deferred import to avoid circular dependency
         from modelseedpy.core.msmodelutl import MSModelUtil
+
         if isinstance(model, MSModelUtil):
             self.model = model.model
             self.modelutl = model
@@ -45,7 +48,12 @@ class BaseFBAPkg:
             self.pkgmgr = MSPackageManager.get_pkg_mgr(model, 1)
         self.pkgmgr.addpkgobj(self)
 
-        self.constraints, self.variables, self.parameters, self.new_reactions = {}, {}, {}, {}
+        self.constraints, self.variables, self.parameters, self.new_reactions = (
+            {},
+            {},
+            {},
+            {},
+        )
         self.variable_types = variable_types
         self.constraint_types = constraint_types
 
@@ -59,7 +67,7 @@ class BaseFBAPkg:
             if obj_type in self.constraints:
                 name = "_".join(constraint.name.split("_")[0:-1])
                 self.constraints[obj_type][name] = constraint
-        
+
         for variable in self.model.solver.variables:
             obj_type = variable.name.split("_")[-1]
             if obj_type in self.variables:
@@ -85,7 +93,9 @@ class BaseFBAPkg:
             self.constraints[obj_type] = {}
         self.model.remove_cons_vars(cobra_objs)
 
-    def build_variable(self, obj_type, lower_bound, upper_bound, vartype, cobra_obj=None):
+    def build_variable(
+        self, obj_type, lower_bound, upper_bound, vartype, cobra_obj=None
+    ):
         name = None
         if self.variable_types[obj_type] == "none":
             count = len(self.variables[obj_type])
@@ -115,7 +125,8 @@ class BaseFBAPkg:
         if name in self.constraints[obj_type]:
             self.model.remove_cons_vars(self.constraints[obj_type][name])
         self.constraints[obj_type][name] = self.model.problem.Constraint(
-            Zero, lb=lower_bound, ub=upper_bound, name=name + "_" + obj_type)
+            Zero, lb=lower_bound, ub=upper_bound, name=name + "_" + obj_type
+        )
         self.model.add_cons_vars(self.constraints[obj_type][name])
         self.model.solver.update()
         if len(coef) > 0:

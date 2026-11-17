@@ -3,7 +3,7 @@
 from __future__ import absolute_import
 
 from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
-from modelseedpy.core.fbahelper import FBAHelper   # !!! imported but not used
+from modelseedpy.core.fbahelper import FBAHelper  # !!! imported but not used
 from numpy import log as ln
 import logging
 
@@ -43,8 +43,8 @@ class KBaseMediaPkg(BaseFBAPkg):
             self.parameters["media"] and self.parameters["media"].name == "Complete"
         ) and self.parameters["default_uptake"] == 0:
             self.parameters["default_uptake"] = 100
-        
-        #First initializing all exchanges to default uptake and excretion
+
+        # First initializing all exchanges to default uptake and excretion
         for reaction in self.modelutl.exchange_list():
             # Set the bound that moves up first: assigning the lower bound to an
             # exchange whose upper bound is still below it makes cobra raise

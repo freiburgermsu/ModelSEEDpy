@@ -20,7 +20,13 @@ setup(
     license=license,
     packages=find_packages(exclude=("docs")),
     package_data={
-        "modelseedpy": ["config.cfg", "core/*.html", "data/*", "data/categories/*", "data/templates/*"],
+        "modelseedpy": [
+            "config.cfg",
+            "core/*.html",
+            "data/*",
+            "data/categories/*",
+            "data/templates/*",
+        ],
     },
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -32,7 +38,7 @@ setup(
         "Programming Language :: Python :: 3.11",
         "Natural Language :: English",
     ],
-    include_package_data =True,
+    include_package_data=True,
     install_requires=[
         "networkx >= 2.4",
         "cobra >= 0.29.0",
@@ -48,8 +54,7 @@ setup(
         "openpyxl",
         "multiprocess",
         "h5py",
-        "graphviz"
-        "Jinja2 >= 3.1.4",
+        "graphviz" "Jinja2 >= 3.1.4",
         "sympy >=1.12.0",
     ],
     tests_require=[

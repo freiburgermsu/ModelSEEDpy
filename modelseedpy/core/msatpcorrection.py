@@ -189,7 +189,7 @@ class MSATPCorrection:
                 media.id = media_id
                 media.name = media_id
                 self.atp_medias.append([media, min_gap.get(media_id, 0.01)])
-        
+
     def index_medias(self):
         """Normalize every media to a [media, minimum objective] pair and hash
         them by id. Run for the medias passed in as well as the default ones."""
@@ -509,7 +509,9 @@ class MSATPCorrection:
             # usefully be filtered; restore everything unfiltered rather than crash.
             logger.warning(
                 "ATP expansion test found no passing solution for %s; restoring all "
-                "noncore reactions unfiltered.", self.model.id)
+                "noncore reactions unfiltered.",
+                self.model.id,
+            )
             self.filtered_noncore = []
         # Removing filtered reactions
         for item in self.filtered_noncore:

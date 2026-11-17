@@ -28,7 +28,7 @@ class MetaboFBAPkg(BaseFBAPkg):
         )
         self.pkgmgr.getpkg("SimpleThermoPkg").build_package()
         peak_hash = {}
-        for peak_data in self.parameters['peaks']: 
+        for peak_data in self.parameters["peaks"]:
             peak_hash[peak_data["id"]] = peak_data
             self.find_metabolites_matching_peak(peak_data)
             self.build_variable(peak_data, "pk")
@@ -51,7 +51,9 @@ class MetaboFBAPkg(BaseFBAPkg):
 
     def build_variable(self, cobra_obj, obj_type):
         if obj_type == "met":
-            return BaseFBAPkg.build_variable(self, obj_type, 0, 1, "continuous", cobra_obj)
+            return BaseFBAPkg.build_variable(
+                self, obj_type, 0, 1, "continuous", cobra_obj
+            )
         elif obj_type == "pk":
             return BaseFBAPkg.build_variable(
                 self, obj_type, 0, 1, "continuous", cobra_obj["id"]

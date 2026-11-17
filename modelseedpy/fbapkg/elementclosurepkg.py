@@ -67,13 +67,15 @@ from modelseedpy.fbapkg.basefbapkg import BaseFBAPkg
 logger = logging.getLogger(__name__)
 
 DEFAULT_ELEMENTS = "all"
-ELEMENT_SYMBOLS = frozenset("""
+ELEMENT_SYMBOLS = frozenset(
+    """
     H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se
     Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb
     Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm
-    Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og""".split())
+    Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og""".split()
+)
 _ATOM = re.compile(r"([A-Z][a-z]?)(\d+(?:\.\d+)?)?")
-_RGROUP = re.compile(r"R(?![a-z])(\d+(?:\.\d+)?)?")      # R, not Rb/Re/Rh/Ru/Rn/Ra/Rf/Rg
+_RGROUP = re.compile(r"R(?![a-z])(\d+(?:\.\d+)?)?")  # R, not Rb/Re/Rh/Ru/Rn/Ra/Rf/Rg
 
 
 def parse_elements(spec=None):
@@ -89,7 +91,9 @@ def parse_elements(spec=None):
     if spec is None:
         return DEFAULT_ELEMENTS
     if isinstance(spec, (bytes, bytearray)):
-        raise ValueError(f"elements must be a string or an iterable of symbols, not {type(spec).__name__}")
+        raise ValueError(
+            f"elements must be a string or an iterable of symbols, not {type(spec).__name__}"
+        )
     split = lambda s: [x for x in re.split(r"[\s,;]+", s.strip()) if x]
     if isinstance(spec, str):
         items = split(spec)
@@ -99,8 +103,10 @@ def parse_elements(spec=None):
         try:
             raw = list(spec)
         except TypeError:
-            raise ValueError(f"elements must be a string or an iterable of symbols, not "
-                             f"{type(spec).__name__}") from None
+            raise ValueError(
+                f"elements must be a string or an iterable of symbols, not "
+                f"{type(spec).__name__}"
+            ) from None
         items = []
         for s in raw:
             if not isinstance(s, str):
@@ -113,8 +119,10 @@ def parse_elements(spec=None):
     out = []
     for s in items:
         if s not in ELEMENT_SYMBOLS:
-            raise ValueError(f"not an element symbol: {s!r} (symbols are case-sensitive, "
-                             f"e.g. 'Co' not 'CO'; or use 'all')")
+            raise ValueError(
+                f"not an element symbol: {s!r} (symbols are case-sensitive, "
+                f"e.g. 'Co' not 'CO'; or use 'all')"
+            )
         if s not in out:
             out.append(s)
     return tuple(out)
@@ -142,11 +150,11 @@ def _base_id(met):
 class ElementClosurePkg(BaseFBAPkg):
     def __init__(self, model):
         BaseFBAPkg.__init__(self, model, "element closure", {}, {"closure": "string"})
-        self.content = {}            # met id -> (atoms dict, charge)
-        self.how = {}                # met id -> how its content was assigned
+        self.content = {}  # met id -> (atoms dict, charge)
+        self.how = {}  # met id -> how its content was assigned
         self.biomass = []
         self.boundary = []
-        self.terms = {}              # element -> {reaction id: -imb (coefficient on net flux)}
+        self.terms = {}  # element -> {reaction id: -imb (coefficient on net flux)}
 
     # ------------------------------------------------------------------ atom assignment ------
     def _parsed(self, met):
@@ -157,16 +165,21 @@ class ElementClosurePkg(BaseFBAPkg):
 
     def build_contents(self):
         p = self.parameters
-        self.content, self.how = {}, {}       # recomputed each build (parameters may differ)
+        self.content, self.how = {}, {}  # recomputed each build (parameters may differ)
         tokens = set(p["biomass_tokens"])
         for met in self.model.metabolites:
             if _base_id(met) in tokens:
                 self.content[met.id], self.how[met.id] = ({}, 0.0), "biomass token"
         if p["biomass_reactions"] is None:
-            self.biomass = [r for r in self.model.reactions
-                            if any(_base_id(m) in tokens for m in r.products)]
+            self.biomass = [
+                r
+                for r in self.model.reactions
+                if any(_base_id(m) in tokens for m in r.products)
+            ]
         else:
-            self.biomass = [self.model.reactions.get_by_id(r) for r in p["biomass_reactions"]]
+            self.biomass = [
+                self.model.reactions.get_by_id(r) for r in p["biomass_reactions"]
+            ]
         bio_ids = {r.id for r in self.biomass}
 
         def known(met):
@@ -196,25 +209,37 @@ class ElementClosurePkg(BaseFBAPkg):
                         for el, n in a.items():
                             atoms[el] = atoms.get(el, 0.0) + r.metabolites[m] * n
                         q += r.metabolites[m] * c
-                    self.content[u.id] = ({el: -n / s for el, n in atoms.items()
-                                           if abs(n) > 1e-12}, -q / s)
+                    self.content[u.id] = (
+                        {el: -n / s for el, n in atoms.items() if abs(n) > 1e-12},
+                        -q / s,
+                    )
                     self.how[u.id] = f"synthesis {r.id}"
                     unknown.discard(u)
                     moved = True
                     break
             if moved:
                 continue
-            dead = [u for u in unknown if not any(
-                r.metabolites[u] > 0 and r.id not in bio_ids and not r.boundary
-                for r in u.reactions)]
-            for u in (dead or list(unknown)):
+            dead = [
+                u
+                for u in unknown
+                if not any(
+                    r.metabolites[u] > 0 and r.id not in bio_ids and not r.boundary
+                    for r in u.reactions
+                )
+            ]
+            for u in dead or list(unknown):
                 self.content[u.id] = ({}, 0.0)
-                self.how[u.id] = "zero: carrier with no producer" if dead else \
-                    "zero: unresolved biomass component"
+                self.how[u.id] = (
+                    "zero: carrier with no producer"
+                    if dead
+                    else "zero: unresolved biomass component"
+                )
                 unknown.discard(u)
                 if not dead:
-                    logger.warning(f"ElementClosurePkg: biomass component {u.id} has no "
-                                   f"resolvable content; counted as zero")
+                    logger.warning(
+                        f"ElementClosurePkg: biomass component {u.id} has no "
+                        f"resolvable content; counted as zero"
+                    )
             if not unknown:
                 break
 
@@ -227,8 +252,11 @@ class ElementClosurePkg(BaseFBAPkg):
             how = "formula"
         else:
             a = formula_atoms(met.formula, strip_r=True)
-            v, how = ((a, float(met.charge or 0)), "explicit atoms (R dropped)") \
-                if a is not None else (({}, float(met.charge or 0)), "zero: no formula")
+            v, how = (
+                ((a, float(met.charge or 0)), "explicit atoms (R dropped)")
+                if a is not None
+                else (({}, float(met.charge or 0)), "zero: no formula")
+            )
         self.content[met.id], self.how[met.id] = v, how
         return v
 
@@ -254,8 +282,10 @@ class ElementClosurePkg(BaseFBAPkg):
                 r = self.model.reactions.get_by_id(rid)
                 coef[r.forward_variable] = coef.get(r.forward_variable, 0.0) + c
                 coef[r.reverse_variable] = coef.get(r.reverse_variable, 0.0) - c
-            self.build_constraint("closure", 0 if p["sense"] == "eq" else None, 0, coef, key)
-        self.terms = terms                    # what summary/creation/imbalanced_reactions report
+            self.build_constraint(
+                "closure", 0 if p["sense"] == "eq" else None, 0, coef, key
+            )
+        self.terms = terms  # what summary/creation/imbalanced_reactions report
         return self.summary()
 
     def clear(self):
@@ -303,9 +333,12 @@ class ElementClosurePkg(BaseFBAPkg):
             exempt = {r: "" for r in exempt}
         self.build_contents()
         bio_ids = {r.id for r in self.biomass}
-        self.boundary = [r for r in self.model.reactions
-                         if r.id not in bio_ids and (r.boundary or
-                                                     r.id.startswith(("EX_", "SK_", "DM_")))]
+        self.boundary = [
+            r
+            for r in self.model.reactions
+            if r.id not in bio_ids
+            and (r.boundary or r.id.startswith(("EX_", "SK_", "DM_")))
+        ]
         rows = list(self.boundary) + list(self.biomass)
         elements = parse_elements(p["elements"])
         if elements == "all":
@@ -318,8 +351,10 @@ class ElementClosurePkg(BaseFBAPkg):
                         else:
                             odd.setdefault(sym, met.id)
             if odd:
-                logger.warning(f"ElementClosurePkg: 'all' skips formula tokens that are not "
-                               f"elements: {odd}")
+                logger.warning(
+                    f"ElementClosurePkg: 'all' skips formula tokens that are not "
+                    f"elements: {odd}"
+                )
             elements = sorted(found)
         keys = list(elements) + (["charge"] if p["charge"] else [])
         if not keys:
@@ -329,10 +364,15 @@ class ElementClosurePkg(BaseFBAPkg):
             if rid not in self.model.reactions:
                 continue
             r = self.model.reactions.get_by_id(rid)
-            bad = [m.id for m in r.metabolites if self._parsed(m) is None
-                   and m.id not in self.content]
+            bad = [
+                m.id
+                for m in r.metabolites
+                if self._parsed(m) is None and m.id not in self.content
+            ]
             if bad:
-                raise ValueError(f"exempt reaction {rid} has metabolites without a formula: {bad}")
+                raise ValueError(
+                    f"exempt reaction {rid} has metabolites without a formula: {bad}"
+                )
             exempt_rxns.append(r)
             logger.info(f"ElementClosurePkg: {rid} exempt ({why})")
         out = {}
@@ -342,13 +382,15 @@ class ElementClosurePkg(BaseFBAPkg):
                 b = self.imbalance(r, key)
                 if abs(b) > 1e-12:
                     terms[r.id] = -b
-            for r in exempt_rxns:             # allow this reaction's own creation of `key`
+            for r in exempt_rxns:  # allow this reaction's own creation of `key`
                 b = self.imbalance(r, key)
                 if abs(b) > 1e-12:
                     terms[r.id] = terms.get(r.id, 0.0) - b
             if not terms:
-                logger.warning(f"ElementClosurePkg: no boundary or biomass compound contains "
-                               f"{key}; no row built for it")
+                logger.warning(
+                    f"ElementClosurePkg: no boundary or biomass compound contains "
+                    f"{key}; no row built for it"
+                )
                 continue
             out[key] = terms
         return out
@@ -359,11 +401,15 @@ class ElementClosurePkg(BaseFBAPkg):
         for v in self.how.values():
             k = v.split(" ")[0] if v.startswith("synthesis") else v
             how[k] = how.get(k, 0) + 1
-        return {"rows": sorted(self.terms), "boundary_reactions": len(self.boundary),
-                "biomass_reactions": len(self.biomass),
-                "pseudo_compounds": {m: h for m, h in self.how.items()
-                                     if h.startswith(("synthesis", "zero"))},
-                "assignment_counts": how}
+        return {
+            "rows": sorted(self.terms),
+            "boundary_reactions": len(self.boundary),
+            "biomass_reactions": len(self.biomass),
+            "pseudo_compounds": {
+                m: h for m, h in self.how.items() if h.startswith(("synthesis", "zero"))
+            },
+            "assignment_counts": how,
+        }
 
     def creation(self, fluxes):
         """Net creation of each closed quantity by internal reactions outside the exemptions,
@@ -372,7 +418,9 @@ class ElementClosurePkg(BaseFBAPkg):
         equals the sum over internal reactions of imbalance x flux."""
         out = {}
         for key, terms in self.terms.items():
-            out[key] = sum(c * float(fluxes[rid]) for rid, c in terms.items() if rid in fluxes)
+            out[key] = sum(
+                c * float(fluxes[rid]) for rid, c in terms.items() if rid in fluxes
+            )
         return out
 
     def imbalanced_reactions(self, keys=None, tol=1e-9):
@@ -387,8 +435,13 @@ class ElementClosurePkg(BaseFBAPkg):
         for r in self.model.reactions:
             if r.id in bio_ids or r.id in bnd:
                 continue
-            if any(self._parsed(m) is None and not str(self.how.get(m.id, "")).startswith(
-                    ("synthesis", "biomass token")) for m in r.metabolites):
+            if any(
+                self._parsed(m) is None
+                and not str(self.how.get(m.id, "")).startswith(
+                    ("synthesis", "biomass token")
+                )
+                for m in r.metabolites
+            ):
                 continue
             imb = {k: self.imbalance(r, k) for k in keys}
             imb = {k: v for k, v in imb.items() if abs(v) > tol}

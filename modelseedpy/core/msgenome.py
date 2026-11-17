@@ -45,7 +45,6 @@ def parse_fasta_str(faa_str, split=DEFAULT_SPLIT, h_func=None):
                         1
                     ]  # The unit test throws an error when this is commented
 
-
             seq = MSFeature(seq_id, "", desc)
         else:
             if seq:
@@ -266,25 +265,30 @@ class MSGenome:
 
         self.features += feature_list
 
-    def create_new_feature(self,id,sequence):
-        newftr = MSFeature(id,sequence)
+    def create_new_feature(self, id, sequence):
+        newftr = MSFeature(id, sequence)
         self.add_features([newftr])
         return newftr
 
     @staticmethod
     def from_annotation_ontology(
-        annoont, prioritized_event_list=None, ontologies=None, merge_all=False,feature_type=None, translate_to_rast=True
+        annoont,
+        prioritized_event_list=None,
+        ontologies=None,
+        merge_all=False,
+        feature_type=None,
+        translate_to_rast=True,
     ):
         gene_hash = annoont.get_gene_term_hash()
         genome = MSGenome()
         features = []
         for gene in gene_hash:
-            feature = MSFeature(gene.id,"")
+            feature = MSFeature(gene.id, "")
             features.append(feature)
             for term in gene_hash[gene]:
                 feature.add_ontology_term(term.ontology.id, term.id)
                 if term.ontology.id == "SSO":
-                    feature.add_ontology_term("RAST",annoont.get_term_name(term))
+                    feature.add_ontology_term("RAST", annoont.get_term_name(term))
         genome.add_features(features)
         return genome
 
@@ -352,8 +356,8 @@ class MSGenome:
         output = {}
         for gene in self.features:
             for alias in gene.aliases:
-                #Check if alias is a list
-                if isinstance(alias,list):
+                # Check if alias is a list
+                if isinstance(alias, list):
                     if alias[1] not in output:
                         output[alias[1]] = gene
                 else:

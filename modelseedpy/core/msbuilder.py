@@ -254,29 +254,32 @@ def build_gpr2(cpx_sets):
         return " or ".join(list_of_ors)
     return list_of_ors[0]
 
-def _reaction_sinks(self,model):
+
+def _reaction_sinks(self, model):
     reactions_sinks = []
-    for cpd_id in ['cpd02701_c0', 'cpd11416_c0', 'cpd15302_c0']:
+    for cpd_id in ["cpd02701_c0", "cpd11416_c0", "cpd15302_c0"]:
         if cpd_id in model.metabolites:
             met = model.metabolites.get_by_id(cpd_id)
-            rxn_exchange = Reaction('SK_'+met.id, 'Sink for '+met.name, 'exchanges', 0, 1000)
+            rxn_exchange = Reaction(
+                "SK_" + met.id, "Sink for " + met.name, "exchanges", 0, 1000
+            )
             rxn_exchange.add_metabolites({met: -1})
             rxn_exchange.annotation[SBO_ANNOTATION] = "SBO:0000627"
             reactions_sinks.append(rxn_exchange)
-    return reactions_sinks   
+    return reactions_sinks
 
 
-def build_gpr(cpx_gene_role):   #!!! Unused and redundant function
+def build_gpr(cpx_gene_role):  #!!! Unused and redundant function
     """
-#     example input:
-#      {'sdh': [{'b0721': 'sdhC', 'b0722': 'sdhD', 'b0723': 'sdhA', 'b0724': 'sdhB'}]}
+    #     example input:
+    #      {'sdh': [{'b0721': 'sdhC', 'b0722': 'sdhD', 'b0723': 'sdhA', 'b0724': 'sdhB'}]}
 
-#      (b0721 and b0722 and b0724 and b0723)
+    #      (b0721 and b0722 and b0724 and b0723)
 
-#      {'cpx1': [{'g1': 'role1', 'g3': 'role2'}, {'g2': 'role1', 'g3': 'role2'}]}
+    #      {'cpx1': [{'g1': 'role1', 'g3': 'role2'}, {'g2': 'role1', 'g3': 'role2'}]}
 
-    :param cpx_gene_role:
-    :return:
+        :param cpx_gene_role:
+        :return:
     """
     # save cpx_id and role_id in reaction annotation for KBase object
     gpr_or_ll = []
@@ -1279,10 +1282,15 @@ class MSBuilder:
         # Deferred import to avoid circular dependency
         from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
         from modelseedpy.core.msmodelutl import MSModelUtil
+
         # FBAHelper.set_objective_from_target_reaction was removed; MSModelUtil
         # carries it now
-        MSModelUtil.get(original_mdl).set_objective_from_target_reaction(target_reaction)
-        model = cobra.io.json.from_json(cobra.io.json.to_json(original_mdl))  #!!! what is the benefit of this I/O processing?
+        MSModelUtil.get(original_mdl).set_objective_from_target_reaction(
+            target_reaction
+        )
+        model = cobra.io.json.from_json(
+            cobra.io.json.to_json(original_mdl)
+        )  #!!! what is the benefit of this I/O processing?
         pkgmgr = MSPackageManager.get_pkg_mgr(model)
         pkgmgr.getpkg("GapfillingPkg").build_package(
             {
