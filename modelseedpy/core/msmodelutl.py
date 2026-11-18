@@ -746,7 +746,9 @@ class MSModelUtil:
         return output
 
     def exchange_list(self):
-        return [rxn for rxn in self.model.reactions if "EX_" in rxn.id]
+        # exchanges are named by prefix: EX_ (and EXF for fixed exchanges); an
+        # id merely containing "EX_", such as SK_EX_..., is not an exchange
+        return [rxn for rxn in self.model.reactions if rxn.id[:3] in ["EX_", "EXF"]]
 
     def internal_list(self):
         exchanges, transports = self.exchange_list(), self.transport_list()
