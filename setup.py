@@ -49,7 +49,6 @@ setup(
         "chemw >= 0.3.2",
         "matplotlib >= 3.0.0",
         "deepdiff",
-        "multiprocess",
         "Jinja2 >= 3.1.4",
         "sympy >=1.12.0",
     ],
