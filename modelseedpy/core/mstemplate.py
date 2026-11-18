@@ -113,7 +113,7 @@ class MSTemplateMetabolite:
         return "{}:{}".format(self.id, self.name)
 
     def _repr_html_(self):
-        return """
+        return f"""
         <table>
             <tr>
                 <td><strong>Compound identifier</strong></td><td>{self.id}</td>
@@ -942,7 +942,7 @@ class NewModelTemplateRole:
         return "{}:{}".format(self.id, self.name)
 
     def _repr_html_(self):
-        return """
+        return f"""
         <table>
             <tr>
                 <td><strong>Role identifier</strong></td><td>{self.id}</td>
