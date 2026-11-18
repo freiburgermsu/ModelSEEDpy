@@ -72,17 +72,22 @@ class KBaseMediaPkg(BaseFBAPkg):
                                 self.pkgmgr is not None
                                 and "FullThermoPkg" in self.pkgmgr.packages
                             ):
-                                logger.info("FullThermo constrained compound: ", met.id)
+                                logger.info(
+                                    f"FullThermo constrained compound: {met.id}"
+                                )
+                                # the concentration variables belong to FullThermoPkg
+                                logconc = self.pkgmgr.getpkg("FullThermoPkg").variables[
+                                    "logconc"
+                                ]
                                 if (
-                                    met.id in self.variables["logconc"]
+                                    met.id in logconc
                                     and met.compartment[0:1] == "e"
+                                    and mediacpd.concentration is not None
+                                    and mediacpd.concentration != 0.001
                                 ):
-                                    if mediacpd.concentration != 0.001:
-                                        self.variables["logconc"][met.id].lb = ln(
-                                            mediacpd.concentration
-                                        )
-                                        self.variables["logconc"][met.id].ub = ln(
-                                            mediacpd.concentration
-                                        )
+                                    logconc[met.id].set_bounds(
+                                        ln(mediacpd.concentration),
+                                        ln(mediacpd.concentration),
+                                    )
                 else:
                     logger.info(f"Media compound: {mediacpd.id} not found in model.")
