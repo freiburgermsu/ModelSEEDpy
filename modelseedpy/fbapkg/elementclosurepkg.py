@@ -32,14 +32,15 @@ Biomass. Biomass is a sink that keeps atoms. Its content is computed from its co
 biomass token (cpd11416, which every biomass reaction emits and sinks remove) carries none, so
 nothing is counted twice and member-level biomass sinks in a community are covered. Macromolecule
 pseudo-compounds -- Protein, DNA, RNA, ACP -- have placeholder formulas (C4H5N2O3R2 for Protein),
-so each is given the content of the reaction that synthesises it from formulated precursors. A
-carrier with no producer (apo-ACP, which biomass releases as it consumes ACP) is zero, which makes
-the pair count only the moiety actually incorporated.
+so each is given the content of the reaction that synthesises it from formulated precursors (a
+reversible reaction written the other way round counts). A carrier with no producer (apo-ACP,
+which biomass releases as it consumes ACP) is zero, which makes the pair count only the moiety
+actually incorporated.
 
 Atom assignment (one, used everywhere): biomass token -> 0; formula without R -> its atoms;
 biomass pseudo-compound -> content of its synthesis reaction; any other formula with R -> its
 explicit atoms (R taken as the same unspecified moiety on both sides of a reaction); no formula
--> 0, and listed in `unformulated`.
+-> 0, tagged "zero: no formula" in `how` (summary() lists it with the pseudo-compounds).
 
 Parameters (build_package):
     elements          which elements get a row. Default "all": every element the boundary and
@@ -54,7 +55,10 @@ Parameters (build_package):
     exempt_reactions  {reaction id: reason} -- reactions whose own imbalance is allowed (e.g. a
                       known stoichiometric error awaiting curation that growth depends on). Every
                       other reaction stays closed. Their metabolites must have formulas.
-    biomass_reactions ids; default: every reaction that produces a biomass token.
+                      Boundary and biomass reactions are not closed, so exempting one changes
+                      nothing; a warning says so.
+    biomass_reactions ids; default: every reaction that produces a biomass token, with a
+                      warning if none does (e.g. a BiGG model): biomass then goes uncounted.
     biomass_tokens    ModelSEED ids of biomass tokens. Default ("cpd11416",).
 """
 from __future__ import absolute_import
@@ -176,6 +180,12 @@ class ElementClosurePkg(BaseFBAPkg):
                 for r in self.model.reactions
                 if any(_base_id(m) in tokens for m in r.products)
             ]
+            if not self.biomass:
+                logger.warning(
+                    f"ElementClosurePkg: no reaction produces a biomass token "
+                    f"{sorted(tokens)}, so no biomass reaction is counted and atoms "
+                    f"kept in biomass escape the closure; pass biomass_reactions"
+                )
         else:
             self.biomass = [
                 self.model.reactions.get_by_id(r) for r in p["biomass_reactions"]
@@ -190,6 +200,14 @@ class ElementClosurePkg(BaseFBAPkg):
                 self.content[met.id], self.how[met.id] = v, "formula"
             return v
 
+        def makes(r, u, reverse=True):
+            # r produces u: u is written as a product, or (reverse) r is reversible and u is
+            # written as a reactant, so running r backwards produces it
+            if r.id in bio_ids or r.boundary:
+                return False
+            c = r.metabolites[u]
+            return c > 0 or (reverse and c < 0 and r.lower_bound < 0)
+
         # biomass components with placeholder formulas: give each the content of the reaction
         # that synthesises it; carriers with no producer are zero; repeat until nothing moves
         unknown = {m for b in self.biomass for m in b.metabolites if known(m) is None}
@@ -197,13 +215,13 @@ class ElementClosurePkg(BaseFBAPkg):
             moved = False
             for u in sorted(unknown, key=lambda m: m.id):
                 for r in u.reactions:
-                    if r.id in bio_ids or r.boundary or r.metabolites[u] <= 0:
+                    if not makes(r, u):
                         continue
                     others = [m for m in r.metabolites if m is not u]
                     vals = [known(m) for m in others]
                     if any(v is None for v in vals):
                         continue
-                    s = r.metabolites[u]
+                    s = r.metabolites[u]  # either sign: u's content balances r
                     atoms, q = {}, 0.0
                     for m, (a, c) in zip(others, vals):
                         for el, n in a.items():
@@ -219,14 +237,16 @@ class ElementClosurePkg(BaseFBAPkg):
                     break
             if moved:
                 continue
-            dead = [
-                u
-                for u in unknown
-                if not any(
-                    r.metabolites[u] > 0 and r.id not in bio_ids and not r.boundary
-                    for r in u.reactions
-                )
-            ]
+            # zero what nothing produces; failing that, carriers produced only by running a
+            # reversible reaction backwards (apo-ACP, when ACP loading is reversible), so the
+            # pair still counts the moiety incorporated
+            dead = [u for u in unknown if not any(makes(r, u) for r in u.reactions)]
+            if not dead:
+                dead = [
+                    u
+                    for u in unknown
+                    if not any(makes(r, u, reverse=False) for r in u.reactions)
+                ]
             for u in dead or list(unknown):
                 self.content[u.id] = ({}, 0.0)
                 self.how[u.id] = (
@@ -269,9 +289,30 @@ class ElementClosurePkg(BaseFBAPkg):
         return tot
 
     # ------------------------------------------------------------------ constraints ----------
+    def _state(self):
+        """What a build sets and the reports read, so it can be put back."""
+        return (
+            dict(self.parameters),
+            self.content,
+            self.how,
+            self.biomass,
+            self.boundary,
+        )
+
+    def _restore(self, state):
+        params, self.content, self.how, self.biomass, self.boundary = state
+        self.parameters.clear()
+        self.parameters.update(params)
+
     def build_package(self, parameters=None):
-        # validate and compute first: a bad parameter must leave the existing rows in place
-        terms = self.closure_terms(parameters)
+        # validate and compute first: a bad parameter must leave the existing rows, and what
+        # the reports read, in place
+        saved = self._state()
+        try:
+            terms = self._closure_terms(parameters)
+        except Exception:
+            self._restore(saved)
+            raise
         p = self.parameters
         # then replace the rows -- otherwise rebuilding with fewer elements (say "all", then
         # C,H,O) would leave the dropped elements' rows in the model
@@ -307,12 +348,21 @@ class ElementClosurePkg(BaseFBAPkg):
 
         For solvers driven outside optlang -- e.g. a model too large to load into an optlang
         interface, solved from its stoichiometric matrix -- add these rows directly.
-        build_package builds exactly these. This call does not change the built rows or what
-        summary(), creation() and imbalanced_reactions() report.
+        build_package builds exactly these. This call changes nothing on the package: not the
+        built rows, not its parameters, not what summary(), creation() and
+        imbalanced_reactions() report.
 
         A requested element that no boundary or biomass compound contains gets no row (it would
         read 0 <= 0); a warning names it.
         """
+        saved = self._state()
+        try:
+            return self._closure_terms(parameters)
+        finally:
+            self._restore(saved)
+
+    def _closure_terms(self, parameters):
+        # closure_terms, setting parameters, content, how, biomass and boundary as it goes
         self.validate_parameters(
             parameters or {},
             [],
@@ -360,8 +410,17 @@ class ElementClosurePkg(BaseFBAPkg):
         if not keys:
             raise ValueError("no rows to build: give elements, or charge=True")
         exempt_rxns = []
+        row_ids = {r.id for r in rows}
         for rid, why in exempt.items():
             if rid not in self.model.reactions:
+                continue
+            if rid in row_ids:
+                # its term already stands for its own exchange of atoms; adding it again
+                # would count that exchange twice
+                logger.warning(
+                    f"ElementClosurePkg: {rid} is a boundary or biomass reaction, which "
+                    f"the closure does not constrain; exempting it changes nothing"
+                )
                 continue
             r = self.model.reactions.get_by_id(rid)
             bad = [
@@ -385,7 +444,7 @@ class ElementClosurePkg(BaseFBAPkg):
             for r in exempt_rxns:  # allow this reaction's own creation of `key`
                 b = self.imbalance(r, key)
                 if abs(b) > 1e-12:
-                    terms[r.id] = terms.get(r.id, 0.0) - b
+                    terms[r.id] = -b
             if not terms:
                 logger.warning(
                     f"ElementClosurePkg: no boundary or biomass compound contains "

@@ -294,3 +294,155 @@ def test_all_skips_tokens_that_are_not_elements(caplog):
     info = _close(m, elements="all")
     assert "X" not in info["rows"] and "H" in info["rows"]
     assert any("not elements" in rec.message for rec in caplog.records)
+
+
+def _reverse(rxn):
+    """Write a reaction the other way round, reversible: same chemistry, opposite signs."""
+    st = {m: -2 * c for m, c in rxn.metabolites.items()}
+    rxn.add_metabolites(st)  # adds -2c to each coefficient c, leaving -c
+    rxn.bounds = (-1000, 1000)
+
+
+def test_reversible_synthesis_written_backwards_still_resolves():
+    m = _toy()
+    _reverse(m.reactions.Psyn)  # P <=> 2 S
+    assert _max(m, "bio1") == pytest.approx(500.5)  # the pump still feeds biomass
+    info = _close(m)
+    assert info["pseudo_compounds"]["P_c0"] == "synthesis Psyn"
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    assert pkg.content["P_c0"][0] == {"C": 2, "O": 4}  # signs handled: 2 CO2, not -2
+    assert _max(m, "bio1") == pytest.approx(0.5)  # was 500.5: P zeroed as a carrier
+
+
+def test_irreversible_reaction_written_backwards_does_not_produce():
+    m = _toy()
+    _reverse(m.reactions.Psyn)
+    m.reactions.Psyn.lower_bound = 0  # P -> 2 S only: nothing makes P
+    info = _close(m)
+    assert info["pseudo_compounds"]["P_c0"] == "zero: carrier with no producer"
+
+
+def _carrier_toy():
+    """Biomass consumes a loaded carrier ACP and releases apo-ACP; the reversible loading
+    reaction apo-ACP + D <=> ACP + E moves a CH2 moiety from D onto the carrier."""
+    m = cobra.Model("carrier")
+    M = lambda i, f: cobra.Metabolite(i, formula=f, charge=0, compartment="c0")
+    apo, acp, d, e, t = (
+        M("apoACP_c0", "R"),
+        M("ACP_c0", "CH2R"),
+        M("D_c0", "C3H6"),
+        M("E_c0", "C2H4"),
+        M("cpd11416_c0", ""),
+    )
+    for rid, st, lb in (
+        ("EX_D_e0", {d: -1}, -1),
+        ("EX_E_e0", {e: -1}, 0),
+        ("ACPS", {apo: -1, d: -1, acp: 1, e: 1}, -1000),
+        ("bio1", {acp: -1, apo: 1, t: 1}, 0),
+        ("SK_cpd11416_c0", {t: -1}, 0),
+    ):
+        r = cobra.Reaction(rid, lower_bound=lb, upper_bound=1000)
+        r.add_metabolites(st)
+        m.add_reactions([r])
+    return m
+
+
+def test_reversible_carrier_loading_keeps_the_carrier_zero():
+    # apo-ACP is made only by running the loading reaction backwards; it stays the zero
+    # carrier, and ACP gets the moiety -- not both zeroed as unresolved
+    m = _carrier_toy()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    info = pkg.build_package({})
+    assert info["pseudo_compounds"] == {
+        "apoACP_c0": "zero: carrier with no producer",
+        "ACP_c0": "synthesis ACPS",
+    }
+    assert pkg.content["ACP_c0"][0] == {"C": 1, "H": 2}
+
+
+def test_exempting_a_boundary_reaction_changes_nothing(caplog):
+    m = _toy(biomass=False)
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    pkg.build_package({})
+    plain = pkg.terms
+    assert plain["C"]["EX_S_e0"] == pytest.approx(1)
+    pkg.build_package({"exempt_reactions": {"EX_S_e0": "x"}})
+    assert pkg.terms == plain  # was doubled: {C: 2, O: 4}
+    assert any("exempting it changes nothing" in r.message for r in caplog.records)
+    # with biomass: the doubled uptake term let one S in support 1.0 biomass
+    m = _toy()
+    _close(m, exempt_reactions={"EX_S_e0": "x"})
+    assert _max(m, "bio1") == pytest.approx(0.5)
+    m = _toy()
+    _close(m, exempt_reactions={"bio1": "y"})  # a doubled biomass term allowed none
+    assert _max(m, "bio1") == pytest.approx(0.5)
+
+
+def _bigg_style():
+    """The toy with a biomass reaction that emits no cpd11416 token: 2 S -> Z, Z exported."""
+    m = _toy(biomass=False)
+    S, Z = m.metabolites.S_c0, cobra.Metabolite("Z_c0", formula="", compartment="c0")
+    for rid, st in (("BIOMASS_toy", {S: -2, Z: 1}), ("EX_Z_e0", {Z: -1})):
+        r = cobra.Reaction(rid, lower_bound=0, upper_bound=1000)
+        r.add_metabolites(st)
+        m.add_reactions([r])
+    return m
+
+
+def test_no_biomass_token_warns(caplog):
+    m = _bigg_style()
+    info = _close(m)
+    assert info["biomass_reactions"] == 0
+    assert any(
+        "no reaction produces a biomass token" in r.message for r in caplog.records
+    )
+    assert _max(m, "BIOMASS_toy") == pytest.approx(500.5)  # what goes uncounted
+    caplog.clear()
+    m = _bigg_style()
+    info = _close(m, biomass_reactions=["BIOMASS_toy"])
+    assert info["biomass_reactions"] == 1
+    assert not any("biomass token" in r.message for r in caplog.records)
+    assert _max(m, "BIOMASS_toy") == pytest.approx(0.5)
+    caplog.clear()
+    _close(
+        _toy(), biomass_reactions=[]
+    )  # an explicit empty set is a choice: no warning
+    assert not any("biomass token" in r.message for r in caplog.records)
+
+
+def test_closure_terms_leaves_the_package_state_alone():
+    m = _toy()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    built = pkg.build_package({})
+    params = dict(pkg.parameters)
+    other = pkg.closure_terms({"biomass_reactions": [], "sense": "eq"})
+    assert "bio1" not in other["C"]  # the call did compute without biomass
+    assert pkg.summary() == built  # was: 0 biomass reactions, no pseudo-compounds
+    assert pkg.parameters == params and pkg.parameters["sense"] == "le"
+    assert _max(m, "bio1") == pytest.approx(0.5)
+
+
+def test_failed_rebuild_keeps_what_is_reported():
+    m = _toy()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    built = pkg.build_package({})
+    params = dict(pkg.parameters)
+    with pytest.raises(ValueError):
+        pkg.build_package({"biomass_reactions": [], "sense": "bogus"})
+    with pytest.raises(ValueError):  # fails after the contents are recomputed
+        pkg.build_package({"biomass_reactions": [], "elements": []})
+    assert pkg.summary() == built
+    assert pkg.parameters == params
+
+
+def test_unformulated_compound_is_tagged_in_how():
+    m = _toy()
+    X = cobra.Metabolite("X_c0", formula="", compartment="c0")
+    r = cobra.Reaction("EX_X_e0", lower_bound=0, upper_bound=0)
+    r.add_metabolites({X: -1})
+    m.add_reactions([r])
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    info = pkg.build_package({})
+    assert pkg.how["X_c0"] == "zero: no formula"
+    assert info["pseudo_compounds"]["X_c0"] == "zero: no formula"
+    assert not hasattr(pkg, "unformulated")
