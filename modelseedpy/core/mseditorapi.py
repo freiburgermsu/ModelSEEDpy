@@ -5,6 +5,28 @@ logger = logging.getLogger(__name__)
 from cobra.core import Reaction, Metabolite
 import re
 
+# Every accepted spelling of a reaction direction, mapped to the ">", "<" or "="
+# that MSEquation.build_from_palsson_string emits
+_DIRECTIONS = {
+    ">": ">",
+    "=>": ">",
+    "forward": ">",
+    "<": "<",
+    "<=": "<",
+    "backward": "<",
+    "=": "=",
+    "<=>": "=",
+    "reversible": "=",
+}
+
+
+def _check_direction(direction):
+    if direction not in _DIRECTIONS:
+        raise ValueError(
+            f"The reaction direction {direction!r} is not one of {list(_DIRECTIONS)}."
+        )
+    return _DIRECTIONS[direction]
+
 
 class MSEditorAPI:
     @staticmethod
@@ -25,7 +47,8 @@ class MSEditorAPI:
     # ASSUMPTIONS:
     # an arrow will exist in the program, either =>, <=>, or <=
     @staticmethod
-    def edit_reaction(model, rxn_id, direction=None, gpr=None):
+    def edit_reaction(model, rxn_id, direction=None, gpr=None, genome=None):
+        # genome is unused, and is kept so that existing calls that pass it still work
         # Direction: =>, <=, or <=>
         if direction is not None:
             lower_bound = model.reactions.get_by_id(rxn_id).lower_bound
@@ -50,8 +73,9 @@ class MSEditorAPI:
                     model.reactions.get_by_id(rxn_id).upper_bound = -1 * lower_bound
 
         # Specify GPR as a string with boolean conditions (e.g. "(b0001 and b0002) or b1010").
+        # An empty string clears the GPR; None leaves it unchanged.
         try:
-            if gpr:
+            if gpr is not None:
                 model.reactions.get_by_id(rxn_id).gene_reaction_rule = gpr
         except:
             raise Exception(
@@ -69,7 +93,7 @@ class MSEditorAPI:
                 raise Exception("Metabolite", cpd_id, " is not in the model.")
         else:  # if there is no biomass reaction
             biomass_rxn = Reaction(biomass_id)
-            model.add_reaction(biomass_rxn)
+            model.add_reactions([biomass_rxn])
             if cpd_id in model.metabolites:
                 biomass_rxn.add_metabolites(
                     {model.metabolites.get_by_id(cpd_id): new_coef}
@@ -96,21 +120,38 @@ class MSEditorAPI:
         lb=0,
         ub=1000,
         gpr=None,
+        genome=None,
     ):
+        # The older call add_custom_reaction(model, rxn_id, MSEquation, gpr, genome)
+        # puts the reaction id in stoichiometry and the MSEquation in direction, and
+        # a positional gpr and genome in rxnID and rxnName. genome is unused.
+        if isinstance(stoichiometry, str) and isinstance(direction, MSEquation):
+            if rxnID != "rxn42":
+                gpr = rxnID
+            rxnID = stoichiometry
+            rxnName = rxnName if isinstance(rxnName, str) else ""
+            stoichiometry, direction = direction.stoich, direction.direction
+        direction = _check_direction(direction)
         if direction == "<":
             lb = -1000
             ub = 0
-        elif direction == "<=>":
+        elif direction == "=":
             lb = -1000
-        if isinstance(list(stoichiometry.keys())[0], str):
-            stoichiometry = {
-                model.metabolites.get_by_id(metID): stoich
-                for metID, stoich in stoichiometry.items()
-            }
+        # Keys may be metabolites, metabolite ids, or the (compound, compartment)
+        # tuples of a parsed MSEquation, which name the metabolite compound_compartment
+        metabolites = {}
+        for met, stoich in stoichiometry.items():
+            if isinstance(met, tuple):
+                met = f"{met[0]}_{met[1]}"
+            if not isinstance(met, Metabolite):
+                if met not in model.metabolites:
+                    raise ValueError(f"The metabolite {met} is not in the model.")
+                met = model.metabolites.get_by_id(met)
+            metabolites[met] = stoich
         new_rxn = MSEquation(
-            stoichiometry, direction, rxnID, rxnName, subsystem, lb, ub, gpr
+            metabolites, direction, rxnID, rxnName, subsystem, lb, ub, gpr
         )
-        model.add_reaction(new_rxn.rxn_obj)
+        model.add_reactions([new_rxn.rxn_obj])
 
     @staticmethod
     def add_ms_reaction(
@@ -120,6 +161,7 @@ class MSEditorAPI:
         compartment_equivalents={"0": "c0", "1": "e0"},
         direction=">",
     ):  # Andrew
+        direction = _check_direction(direction)
         new_rxn = Reaction(rxn_id)
         modelseed_reaction = modelseed.get_seed_reaction(rxn_id)
         new_rxn.name = modelseed_reaction.data["name"]
@@ -134,11 +176,8 @@ class MSEditorAPI:
         }
 
         new_rxn.add_metabolites(metabolites_to_add)
-        new_rxn.lower_bound = 0 if direction != "=" else -1000
-        new_rxn.upper_bound = 1000
-        if direction == "<":
-            new_rxn.lower_bound = -1000
-            new_rxn.upper_bound = 0
+        new_rxn.lower_bound = 0 if direction == ">" else -1000
+        new_rxn.upper_bound = 0 if direction == "<" else 1000
         model.add_reactions([new_rxn])
 
     @staticmethod
