@@ -212,13 +212,15 @@ class MSMinimalMedia:
                 )
             return min_media, sol
         finally:
-            # release the throwaway util's MSPackageManager entry: the class-level
-            # pkgmgrs dict would otherwise pin this util AND its full model copy
-            # for the process lifetime — one leaked copy per minimal-media call,
-            # which OOM-killed large multi-worker media sweeps
+            # release the throwaway copy's registry entries: the class-level
+            # MSPackageManager.pkgmgrs and MSModelUtil.mdlutls dicts would
+            # otherwise pin its full model for the process lifetime — one leaked
+            # copy per minimal-media call, which OOM-killed large multi-worker
+            # media sweeps. Both registries are keyed by the model.
             from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
 
-            MSPackageManager.pkgmgrs.pop(model_util, None)
+            MSPackageManager.pkgmgrs.pop(model_util.model, None)
+            MSModelUtil.mdlutls.pop(model_util.model, None)
 
     @staticmethod
     def determine_min_media(
@@ -309,7 +311,7 @@ class MSMinimalMedia:
     ):
         """minimize the quantity of metabolites that are consumed by the model"""
         if org_model.slim_optimize() == 0:
-            rprint(f"The model {org_model.id} does not grow")
+            print(f"The model {org_model.id} does not grow")
             return None
         model_util = MSModelUtil(org_model, True)
         model_util.add_timeout(10)
