@@ -12,7 +12,8 @@ import os
 
 import pytest
 
-# modelseedpy.core.msprobability imports both at module level
+# modelseedpy.core.msprobability imports cobrakbase at module level; mscommunity is
+# needed by the community test and the imports below
 pytest.importorskip("mscommunity")
 pytest.importorskip("cobrakbase")
 
