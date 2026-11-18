@@ -161,8 +161,8 @@ class SimpleThermoPkg(BaseFBAPkg):
 
     def clear_coupling(self):
         """Remove the coupling rows and binaries of an earlier build, of either coupling. The
-        potentials and dgp variables are kept: build_variable reuses them, and other packages
-        (FullThermoPkg) hold rows on the potentials. RevBinPkg's own rows are left alone."""
+        potentials and dgp variables are kept, with this build's bounds: build_variable reuses
+        them, and other packages (FullThermoPkg) hold rows on the potentials. RevBinPkg's own rows are left alone."""
         objs = []
         for kind in ("thermo", "thermof", "thermor", "zfc", "zrc", "zexcl"):
             objs.extend(self.constraints[kind].values())
@@ -174,22 +174,20 @@ class SimpleThermoPkg(BaseFBAPkg):
             self.model.remove_cons_vars(objs)
 
     def build_potential_variable(self, object):
-        return self.build_variable(
-            "potential",
-            -1 * self.parameters["max_potential"],
-            self.parameters["max_potential"],
-            "continuous",
-            object,
-        )
+        M = self.parameters["max_potential"]
+        variable = self.build_variable("potential", -M, M, "continuous", object)
+        # build_variable returns an earlier build's variable unchanged, so a rebuild with
+        # another max_potential would keep the old bounds
+        variable.set_bounds(-M, M)
+        return variable
 
     def build_dgp_variable(self, object):
-        return self.build_variable(
-            "dgp",
-            -1 * self.parameters["max_potential"],
-            self.parameters["max_potential"],
-            "continuous",
-            object,
-        )
+        M = self.parameters["max_potential"]
+        variable = self.build_variable("dgp", -M, M, "continuous", object)
+        # build_variable returns an earlier build's variable unchanged, so a rebuild with
+        # another max_potential would keep the old bounds
+        variable.set_bounds(-M, M)
+        return variable
 
     def build_dgp_constraint(self, object):
         # dgp(i) = sum_j S(j,i) * p(j)       0 <= -dgp(i) + sum_j S(j,i) p(j) <= 0

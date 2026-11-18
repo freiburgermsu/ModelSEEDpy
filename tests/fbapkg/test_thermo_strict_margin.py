@@ -201,3 +201,95 @@ def test_database_error_is_converted_to_kj(monkeypatch):
     assert pkg.database_error("cpd2") is None  # no-estimate marker
     assert pkg.database_error("cpd3") is None
     assert pkg.database_error("cpdX") is None
+
+
+def _pinned_model(deltag_a=-100.0, deltag_b=-110.0):
+    """glucose -> 2 pyruvate with both formation energies (kcal/mol) in notes['deltag'],
+    so FullThermoPkg needs the database for nothing but the error bounds."""
+    m = cobra.Model("pinned")
+    a = cobra.Metabolite("cpd00027_c0", compartment="c0", formula="C6H12O6", charge=0)
+    b = cobra.Metabolite("cpd00020_c0", compartment="c0", formula="C3H3O3", charge=-1)
+    a.notes = {"deltag": deltag_a}
+    b.notes = {"deltag": deltag_b}
+    m.add_metabolites([a, b])
+    r = cobra.Reaction("R1", lower_bound=-1000, upper_bound=1000)
+    r.add_metabolites({a: -1, b: 2})
+    ex = cobra.Reaction("EX_cpd00027_e0", lower_bound=-10, upper_bound=1000)
+    ex.add_metabolites({a: -1})
+    dm = cobra.Reaction("DM_cpd00020_c0", lower_bound=0, upper_bound=1000)
+    dm.add_metabolites({b: -1})
+    m.add_reactions([r, ex, dm])
+    m.objective = "DM_cpd00020_c0"
+    return m
+
+
+def test_unreadable_database_falls_back_to_default_error(monkeypatch, caplog, tmp_path):
+    # use_database_error=True is the default; a missing database used to raise
+    # FileNotFoundError out of build_package even though no energy came from it
+    from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+
+    monkeypatch.setattr(ModelSEEDBiochem, "default_biochemistry", None)
+    monkeypatch.setenv("MODELSEED_DB_PATH", str(tmp_path / "no_database"))
+    m = _pinned_model()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("FullThermoPkg")
+    with caplog.at_level("WARNING", logger="modelseedpy.fbapkg.fullthermopkg"):
+        pkg.build_package({})
+    warnings = [r for r in caplog.records if "ModelSEED database" in r.message]
+    assert len(warnings) == 1  # one per build, not one per compound
+    for kind in ("pdgerr", "ndgerr"):
+        for var in pkg.variables[kind].values():
+            assert var.ub == pytest.approx(5)  # default_max_error
+    assert sorted(pkg.constraints["potc"]) == ["cpd00020_c0", "cpd00027_c0"]
+    assert m.slim_optimize() == pytest.approx(20)
+
+
+def test_rebuild_with_another_max_potential_matches_a_fresh_build():
+    # glucose at -3000 kcal/mol = -12552 kJ/mol: free under max_potential 10000, pinned
+    # under 100000. A rebuild kept the potentials' old bounds of +/-10000, so the pinned
+    # compound could not reach its energy and the model was infeasible; a rebuild back
+    # down kept the row that pinned it beyond the new bounds.
+    m = _pinned_model(deltag_a=-3000.0, deltag_b=-1501.0)
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("FullThermoPkg")
+    simple = pkg.pkgmgr.getpkg("SimpleThermoPkg")
+    for max_potential, pinned in [
+        (10000, ["cpd00020_c0"]),
+        (100000, ["cpd00020_c0", "cpd00027_c0"]),
+        (10000, ["cpd00020_c0"]),
+    ]:
+        pkg.build_package({"use_database_error": False, "max_potential": max_potential})
+        assert m.slim_optimize() == pytest.approx(20)  # as a fresh build; nan if stale
+        assert sorted(pkg.constraints["potc"]) == pinned
+        assert sorted(c.name for c in m.constraints if c.name.endswith("_potc")) == [
+            f"{mid}_potc" for mid in pinned
+        ]
+        for kind in ("potential", "dgp"):
+            for var in simple.variables[kind].values():
+                assert (var.lb, var.ub) == (-max_potential, max_potential)
+
+
+def test_rebuild_resets_concentration_and_error_bounds():
+    import math
+
+    m = _pinned_model()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("FullThermoPkg")
+    pkg.build_package({"use_database_error": False})
+    pkg.build_package(
+        {
+            "use_database_error": False,
+            "custom_concentrations": {"cpd00027_c0": [0.05, 0.1]},
+            "default_max_error": 20,
+            "custom_deltaG_error": {"cpd00020": 2},
+        }
+    )
+    glc = pkg.variables["logconc"]["cpd00027_c0"]
+    assert (glc.lb, glc.ub) == pytest.approx((math.log(0.05), math.log(0.1)))
+    pyr = pkg.variables["logconc"]["cpd00020_c0"]
+    assert (pyr.lb, pyr.ub) == pytest.approx((math.log(1e-6), math.log(0.02)))
+    for kind in ("pdgerr", "ndgerr"):
+        assert pkg.variables[kind]["cpd00027_c0"].ub == 20
+        assert pkg.variables[kind]["cpd00020_c0"].ub == 2
+    # and back to the defaults
+    pkg.build_package({"use_database_error": False})
+    assert (glc.lb, glc.ub) == pytest.approx((math.log(1e-6), math.log(0.02)))
+    for kind in ("pdgerr", "ndgerr"):
+        assert pkg.variables[kind]["cpd00020_c0"].ub == 5

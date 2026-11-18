@@ -144,6 +144,8 @@ class FullThermoPkg(BaseFBAPkg):
         if self.parameters["infeasible_model"]:
             simple_thermo_parameters["dgbin"] = True
         self.pkgmgr.getpkg("SimpleThermoPkg").build_package(simple_thermo_parameters)
+        # database_error() sets this when the database cannot be loaded; each build tries again
+        self._database_unavailable = False
 
         self.parameters[
             "combined_custom_concentrations"
@@ -229,10 +231,13 @@ class FullThermoPkg(BaseFBAPkg):
     def build_concfit_objective(self, target_concentrations, weights=None):
         weights = weights or {}
         self._validate_concfit_weights(weights)
-        # Removing all existing concfit constraints
+        # Removing all existing concfit constraints, from the model and from
+        # self.constraints: build_constraint removes a row it still finds there, and a
+        # row already gone from the solver raises LookupError on a second fit
         for metabolite in self.model.metabolites:
             if metabolite.id in self.constraints["concfit"]:
                 self.model.remove_cons_vars(self.constraints["concfit"][metabolite.id])
+                del self.constraints["concfit"][metabolite.id]
         objcoefs = {}
         for metabolite in self.model.metabolites:
             if metabolite.id in target_concentrations:
@@ -330,7 +335,11 @@ class FullThermoPkg(BaseFBAPkg):
         if msid in self.parameters["combined_custom_concentrations"]:
             lb = ln(self.parameters["combined_custom_concentrations"][msid][0])
             ub = ln(self.parameters["combined_custom_concentrations"][msid][1])
-        return self.build_variable("logconc", lb, ub, "continuous", object)
+        variable = self.build_variable("logconc", lb, ub, "continuous", object)
+        # build_variable returns an earlier build's variable unchanged, so a rebuild with
+        # other concentrations would keep the old bounds
+        variable.set_bounds(lb, ub)
+        return variable
 
     def build_dgerr_variables(self, object):
         msid = self.modelutl.metabolite_msid(object)
@@ -351,19 +360,37 @@ class FullThermoPkg(BaseFBAPkg):
             ub = self.parameters["custom_deltaG_error"][msid]
         elif object.id in self.parameters["custom_deltaG_error"]:
             ub = self.parameters["custom_deltaG_error"][object.id]
-        self.build_variable("pdgerr", 0, ub, "continuous", object)
-        self.build_variable("ndgerr", 0, ub, "continuous", object)
+        # set_bounds: a variable of an earlier build comes back with its old bounds
+        self.build_variable("pdgerr", 0, ub, "continuous", object).set_bounds(0, ub)
+        self.build_variable("ndgerr", 0, ub, "continuous", object).set_bounds(0, ub)
 
     def database_error(self, msid):
-        """The error the database reports for a compound's formation energy."""
-        if msid is None:
+        """The error the database reports for a compound's formation energy.
+
+        The database only widens the default error bound here, and the energies may all
+        come from notes['deltag'], so a database that cannot be read is not fatal: the
+        first failure logs one warning, and this returns None (the default bound) for
+        every compound until the next build_package tries again."""
+        if msid is None or getattr(self, "_database_unavailable", False):
             return None
         from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
 
-        if self.parameters["modelseed_db_path"] is not None:
-            biochem_db = ModelSEEDBiochem.get(path=self.parameters["modelseed_db_path"])
-        else:
-            biochem_db = ModelSEEDBiochem.get()
+        try:
+            if self.parameters["modelseed_db_path"] is not None:
+                biochem_db = ModelSEEDBiochem.get(
+                    path=self.parameters["modelseed_db_path"]
+                )
+            else:
+                biochem_db = ModelSEEDBiochem.get()
+        except OSError as ex:
+            self._database_unavailable = True
+            logger.warning(
+                f"FullThermoPkg: cannot load the ModelSEED database ({ex}); the error "
+                f"bounds use default_max_error ({self.parameters['default_max_error']} "
+                f"kJ/mol) without the database's own estimates. Set "
+                f"use_database_error=False to skip the database."
+            )
+            return None
         if msid not in biochem_db.compounds:
             return None
         error = getattr(biochem_db.compounds.get_by_id(msid), "delta_g_error", None)
@@ -377,6 +404,10 @@ class FullThermoPkg(BaseFBAPkg):
 
     def build_gibbs_constraint(self, object):
         msid = self.modelutl.metabolite_msid(object)
+        # An earlier build's row goes first: a compound left free this time (no energy, or
+        # beyond max_potential) must not stay pinned by it
+        if object.id in self.constraints["potc"]:
+            self.model.remove_cons_vars(self.constraints["potc"].pop(object.id))
 
         # potential(i) (kJ/mol) = deltaG(i) (kJ/mol) + R*T(K)*lnconc(i)
         #                         + charge(i) * Faraday(kC/mol) * compartment_potential(mV) / 1000
