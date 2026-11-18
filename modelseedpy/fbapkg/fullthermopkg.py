@@ -335,7 +335,11 @@ class FullThermoPkg(BaseFBAPkg):
         if msid in self.parameters["combined_custom_concentrations"]:
             lb = ln(self.parameters["combined_custom_concentrations"][msid][0])
             ub = ln(self.parameters["combined_custom_concentrations"][msid][1])
-        return self.build_variable("logconc", lb, ub, "continuous", object)
+        variable = self.build_variable("logconc", lb, ub, "continuous", object)
+        # build_variable returns an earlier build's variable unchanged, so a rebuild with
+        # other concentrations would keep the old bounds
+        variable.set_bounds(lb, ub)
+        return variable
 
     def build_dgerr_variables(self, object):
         msid = self.modelutl.metabolite_msid(object)
@@ -356,8 +360,9 @@ class FullThermoPkg(BaseFBAPkg):
             ub = self.parameters["custom_deltaG_error"][msid]
         elif object.id in self.parameters["custom_deltaG_error"]:
             ub = self.parameters["custom_deltaG_error"][object.id]
-        self.build_variable("pdgerr", 0, ub, "continuous", object)
-        self.build_variable("ndgerr", 0, ub, "continuous", object)
+        # set_bounds: a variable of an earlier build comes back with its old bounds
+        self.build_variable("pdgerr", 0, ub, "continuous", object).set_bounds(0, ub)
+        self.build_variable("ndgerr", 0, ub, "continuous", object).set_bounds(0, ub)
 
     def database_error(self, msid):
         """The error the database reports for a compound's formation energy.
@@ -399,6 +404,10 @@ class FullThermoPkg(BaseFBAPkg):
 
     def build_gibbs_constraint(self, object):
         msid = self.modelutl.metabolite_msid(object)
+        # An earlier build's row goes first: a compound left free this time (no energy, or
+        # beyond max_potential) must not stay pinned by it
+        if object.id in self.constraints["potc"]:
+            self.model.remove_cons_vars(self.constraints["potc"].pop(object.id))
 
         # potential(i) (kJ/mol) = deltaG(i) (kJ/mol) + R*T(K)*lnconc(i)
         #                         + charge(i) * Faraday(kC/mol) * compartment_potential(mV) / 1000
