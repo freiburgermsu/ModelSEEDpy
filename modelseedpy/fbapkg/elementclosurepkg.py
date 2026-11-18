@@ -40,7 +40,9 @@ actually incorporated.
 Atom assignment (one, used everywhere): biomass token -> 0; formula without R -> its atoms;
 biomass pseudo-compound -> content of its synthesis reaction; any other formula with R -> its
 explicit atoms (R taken as the same unspecified moiety on both sides of a reaction); no formula
--> 0, tagged "zero: no formula" in `how` (summary() lists it with the pseudo-compounds).
+(empty, "null", "noformula", or the "*" KBase models carry) -> 0, tagged "zero: no formula" in
+`how` (summary() lists it with the pseudo-compounds, and a warning names any that sit on the
+boundary: their exchanges count no atoms, so what they bring in is closed as if it were nothing).
 
 Parameters (build_package):
     elements          which elements get a row. Default "all": every element the boundary and
@@ -80,6 +82,7 @@ ELEMENT_SYMBOLS = frozenset(
 )
 _ATOM = re.compile(r"([A-Z][a-z]?)(\d+(?:\.\d+)?)?")
 _RGROUP = re.compile(r"R(?![a-z])(\d+(?:\.\d+)?)?")  # R, not Rb/Re/Rh/Ru/Rn/Ra/Rf/Rg
+_R_DROPPED = "explicit atoms (R dropped)"
 
 
 def parse_elements(spec=None):
@@ -135,7 +138,7 @@ def parse_elements(spec=None):
 def formula_atoms(formula, strip_r=False):
     """Atom counts of a formula. None if there is none, or if it carries an R group and
     strip_r is False; with strip_r the R groups are dropped and the explicit atoms counted."""
-    if not formula or formula in ("null", "noformula"):
+    if not formula or formula in ("null", "noformula", "*"):
         return None
     if _RGROUP.search(formula):
         if not strip_r:
@@ -214,7 +217,9 @@ class ElementClosurePkg(BaseFBAPkg):
         for _ in range(50):
             moved = False
             for u in sorted(unknown, key=lambda m: m.id):
-                for r in u.reactions:
+                # by id: u.reactions is a set, and when several reactions make u the one
+                # taken must not depend on the run
+                for r in sorted(u.reactions, key=lambda r: r.id):
                     if not makes(r, u):
                         continue
                     others = [m for m in r.metabolites if m is not u]
@@ -273,7 +278,7 @@ class ElementClosurePkg(BaseFBAPkg):
         else:
             a = formula_atoms(met.formula, strip_r=True)
             v, how = (
-                ((a, float(met.charge or 0)), "explicit atoms (R dropped)")
+                ((a, float(met.charge or 0)), _R_DROPPED)
                 if a is not None
                 else (({}, float(met.charge or 0)), "zero: no formula")
             )
@@ -352,8 +357,9 @@ class ElementClosurePkg(BaseFBAPkg):
         built rows, not its parameters, not what summary(), creation() and
         imbalanced_reactions() report.
 
-        A requested element that no boundary or biomass compound contains gets no row (it would
-        read 0 <= 0); a warning names it.
+        A requested element that no boundary or biomass reaction exchanges gets no row (it would
+        read 0 <= 0); a warning names it. With "all" such an element -- present only in
+        compounds whose atoms balance in each of those reactions -- is skipped quietly.
         """
         saved = self._state()
         try:
@@ -391,6 +397,7 @@ class ElementClosurePkg(BaseFBAPkg):
         ]
         rows = list(self.boundary) + list(self.biomass)
         elements = parse_elements(p["elements"])
+        named = elements != "all"
         if elements == "all":
             found, odd = set(), {}
             for r in rows:
@@ -423,10 +430,14 @@ class ElementClosurePkg(BaseFBAPkg):
                 )
                 continue
             r = self.model.reactions.get_by_id(rid)
+            # biomass tokens and pseudo-compounds were given a content above; anything else
+            # without a parseable formula leaves the reaction's own balance undefined (whether
+            # or not "all" has already cached it as zero or as its explicit atoms)
             bad = [
                 m.id
                 for m in r.metabolites
-                if self._parsed(m) is None and m.id not in self.content
+                if self._parsed(m) is None
+                and self.how.get(m.id) in (None, "zero: no formula", _R_DROPPED)
             ]
             if bad:
                 raise ValueError(
@@ -446,12 +457,29 @@ class ElementClosurePkg(BaseFBAPkg):
                 if abs(b) > 1e-12:
                     terms[r.id] = -b
             if not terms:
-                logger.warning(
-                    f"ElementClosurePkg: no boundary or biomass compound contains "
-                    f"{key}; no row built for it"
-                )
+                if named or key == "charge":
+                    logger.warning(
+                        f"ElementClosurePkg: no boundary or biomass reaction exchanges "
+                        f"{key} (no compound there contains {key}, or it balances in "
+                        f"each); no row built for it"
+                    )
                 continue
             out[key] = terms
+        blank = sorted(
+            {
+                m.id
+                for r in self.boundary
+                for m in r.metabolites
+                if self.how.get(m.id) == "zero: no formula"
+            }
+        )
+        if blank:
+            logger.warning(
+                f"ElementClosurePkg: {len(blank)} boundary compound(s) have no formula, so "
+                f"their exchanges count no atoms and the closure treats what they bring in "
+                f"as nothing (give them formulas): {blank[:10]}"
+                + (" ..." if len(blank) > 10 else "")
+            )
         return out
 
     # ------------------------------------------------------------------ reporting ------------
@@ -486,24 +514,32 @@ class ElementClosurePkg(BaseFBAPkg):
         """Internal reactions that create or destroy a closed quantity, under formulas alone
         (reactions involving an R-group or unformulated metabolite are left out: their balance
         is not defined). These are the curation targets. `keys` defaults to the rows built --
-        every element present by default -- or pass keys=[...]."""
+        every element present by default -- or pass keys=[...]. Like closure_terms, it leaves
+        what summary() reports unchanged."""
         keys = keys or list(self.terms)
         bio_ids = {r.id for r in self.biomass}
         bnd = {r.id for r in self.boundary}
-        out = {}
-        for r in self.model.reactions:
-            if r.id in bio_ids or r.id in bnd:
-                continue
-            if any(
-                self._parsed(m) is None
-                and not str(self.how.get(m.id, "")).startswith(
-                    ("synthesis", "biomass token")
-                )
-                for m in r.metabolites
-            ):
-                continue
-            imb = {k: self.imbalance(r, k) for k in keys}
-            imb = {k: v for k, v in imb.items() if abs(v) > tol}
-            if imb:
-                out[r.id] = imb
-        return out
+        # imbalance() caches each metabolite it reads into content/how; work on copies so the
+        # assignment counts summary() reports stay those of the build
+        content, how = self.content, self.how
+        self.content, self.how = dict(content), dict(how)
+        try:
+            out = {}
+            for r in self.model.reactions:
+                if r.id in bio_ids or r.id in bnd:
+                    continue
+                if any(
+                    self._parsed(m) is None
+                    and not str(self.how.get(m.id, "")).startswith(
+                        ("synthesis", "biomass token")
+                    )
+                    for m in r.metabolites
+                ):
+                    continue
+                imb = {k: self.imbalance(r, k) for k in keys}
+                imb = {k: v for k, v in imb.items() if abs(v) > tol}
+                if imb:
+                    out[r.id] = imb
+            return out
+        finally:
+            self.content, self.how = content, how

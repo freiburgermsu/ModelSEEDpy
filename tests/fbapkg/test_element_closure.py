@@ -446,3 +446,94 @@ def test_unformulated_compound_is_tagged_in_how():
     assert pkg.how["X_c0"] == "zero: no formula"
     assert info["pseudo_compounds"]["X_c0"] == "zero: no formula"
     assert not hasattr(pkg, "unformulated")
+
+
+def test_star_formula_is_no_formula(caplog):
+    # KBase models write "*" for an unknown formula (340 of iSB1139's 1196 metabolites); it
+    # is no formula, not a formula with no atoms
+    assert formula_atoms("*") is None and formula_atoms("*", strip_r=True) is None
+    m = _toy()
+    X = cobra.Metabolite("X_c0", formula="*", compartment="c0")
+    r = cobra.Reaction("EX_X_e0", lower_bound=-1, upper_bound=0)
+    r.add_metabolites({X: -1})
+    m.add_reactions([r])
+    r = cobra.Reaction("rX", lower_bound=0, upper_bound=1000)
+    r.add_metabolites({X: -1, m.metabolites.S_c0: 1})  # balance undefined
+    m.add_reactions([r])
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    info = pkg.build_package({})
+    assert pkg.how["X_c0"] == "zero: no formula"
+    assert info["pseudo_compounds"]["X_c0"] == "zero: no formula"
+    assert any(
+        "have no formula" in rec.message and "X_c0" in rec.message
+        for rec in caplog.records
+    )
+    assert "rX" not in pkg.imbalanced_reactions()
+    assert set(pkg.imbalanced_reactions()) == {"r2"}
+    for spec in ("all", "C,O"):  # an exempt reaction's balance must be defined
+        with pytest.raises(ValueError):
+            pkg.build_package({"elements": spec, "exempt_reactions": {"rX": "x"}})
+
+
+def test_star_biomass_component_resolves_through_synthesis():
+    m = _toy()
+    m.metabolites.P_c0.formula = "*"  # was "R": same placeholder role
+    info = _close(m)
+    assert info["pseudo_compounds"]["P_c0"] == "synthesis Psyn"
+    assert _max(m, "bio1") == pytest.approx(0.5)
+
+
+def test_imbalanced_reactions_leaves_the_summary_alone():
+    m = _toy()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    built = pkg.build_package({})
+    assert set(pkg.imbalanced_reactions()) == {"r2"}
+    assert pkg.summary() == built
+
+
+def test_synthesis_choice_does_not_depend_on_set_order():
+    # two reactions make P with different contents; the first by id is taken, every run
+    m = _toy()
+    r = cobra.Reaction("Asyn", lower_bound=0, upper_bound=1000)
+    r.add_metabolites({m.metabolites.S_c0: -3, m.metabolites.P_c0: 1})
+    m.add_reactions([r])
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    info = pkg.build_package({})
+    assert info["pseudo_compounds"]["P_c0"] == "synthesis Asyn"
+    assert pkg.content["P_c0"][0] == {"C": 3, "O": 6}
+
+
+def test_element_that_balances_everywhere(caplog):
+    # biomass consumes a loaded carrier and releases it unloaded, as BiGG biomass does
+    # accoa -> coa: N sits in biomass compounds, but no boundary or biomass reaction
+    # exchanges any
+    m = _toy()
+    Qa = cobra.Metabolite("Qa_c0", formula="C2NO2", compartment="c0")
+    Qb = cobra.Metabolite("Qb_c0", formula="CN", compartment="c0")
+    r = cobra.Reaction("Qload", lower_bound=0, upper_bound=1000)
+    r.add_metabolites({Qb: -1, m.metabolites.S_c0: -1, Qa: 1})
+    m.add_reactions([r])
+    m.reactions.bio1.add_metabolites({Qa: -1, Qb: 1})
+    caplog.clear()
+    assert set(_close(m)["rows"]) == {"C", "O"}  # "all": N skipped quietly
+    assert not any("exchanges N" in rec.message for rec in caplog.records)
+    # named: N still gets no row (it would read 0 <= 0), but a warning says why
+    assert set(_close(m, elements="C,N")["rows"]) == {"C"}
+    assert any("exchanges N" in rec.message for rec in caplog.records)
+
+
+def test_modelseed_core_model_is_untouched():
+    # his ModelSEED-id E. coli core fixture: a balanced model keeps its growth under the
+    # default closure, and nothing is reported for curation
+    from tests.test_data.mock_data import mock_model_ecoli_core
+
+    m = mock_model_ecoli_core(True)
+    free = m.slim_optimize()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("ElementClosurePkg")
+    info = pkg.build_package({"biomass_reactions": ["Biomass_Ecoli_core"]})
+    assert set(info["rows"]) == {"C", "H", "N", "O", "P"}
+    assert info["boundary_reactions"] == 20 and info["biomass_reactions"] == 1
+    assert m.slim_optimize() == pytest.approx(free)
+    assert pkg.imbalanced_reactions() == {}
+    sol = m.optimize()
+    assert all(v <= 1e-6 for v in pkg.creation(sol.fluxes).values())
