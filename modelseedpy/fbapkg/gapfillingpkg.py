@@ -718,6 +718,13 @@ class GapfillingPkg(BaseFBAPkg):
             )
             for condition in condition_list:
                 condition["change"] = False
+        if filtered_list is None:
+            # reaction_expansion_test's sentinel: a test fails even with every
+            # candidate reaction blocked, so no filtering can make it pass
+            logger.warning(
+                "Gapfilling test conditions cannot be met by any filtering of the solution"
+            )
+            return None
         if len(filtered_list) > 0:
             if max_iterations > 0:
                 logger.warning("Gapfilling test failed " + str(11 - max_iterations))
