@@ -201,3 +201,43 @@ def test_database_error_is_converted_to_kj(monkeypatch):
     assert pkg.database_error("cpd2") is None  # no-estimate marker
     assert pkg.database_error("cpd3") is None
     assert pkg.database_error("cpdX") is None
+
+
+def _pinned_model(deltag_a=-100.0, deltag_b=-110.0):
+    """glucose -> 2 pyruvate with both formation energies (kcal/mol) in notes['deltag'],
+    so FullThermoPkg needs the database for nothing but the error bounds."""
+    m = cobra.Model("pinned")
+    a = cobra.Metabolite("cpd00027_c0", compartment="c0", formula="C6H12O6", charge=0)
+    b = cobra.Metabolite("cpd00020_c0", compartment="c0", formula="C3H3O3", charge=-1)
+    a.notes = {"deltag": deltag_a}
+    b.notes = {"deltag": deltag_b}
+    m.add_metabolites([a, b])
+    r = cobra.Reaction("R1", lower_bound=-1000, upper_bound=1000)
+    r.add_metabolites({a: -1, b: 2})
+    ex = cobra.Reaction("EX_cpd00027_e0", lower_bound=-10, upper_bound=1000)
+    ex.add_metabolites({a: -1})
+    dm = cobra.Reaction("DM_cpd00020_c0", lower_bound=0, upper_bound=1000)
+    dm.add_metabolites({b: -1})
+    m.add_reactions([r, ex, dm])
+    m.objective = "DM_cpd00020_c0"
+    return m
+
+
+def test_unreadable_database_falls_back_to_default_error(monkeypatch, caplog, tmp_path):
+    # use_database_error=True is the default; a missing database used to raise
+    # FileNotFoundError out of build_package even though no energy came from it
+    from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+
+    monkeypatch.setattr(ModelSEEDBiochem, "default_biochemistry", None)
+    monkeypatch.setenv("MODELSEED_DB_PATH", str(tmp_path / "no_database"))
+    m = _pinned_model()
+    pkg = MSPackageManager.get_pkg_mgr(m).getpkg("FullThermoPkg")
+    with caplog.at_level("WARNING", logger="modelseedpy.fbapkg.fullthermopkg"):
+        pkg.build_package({})
+    warnings = [r for r in caplog.records if "ModelSEED database" in r.message]
+    assert len(warnings) == 1  # one per build, not one per compound
+    for kind in ("pdgerr", "ndgerr"):
+        for var in pkg.variables[kind].values():
+            assert var.ub == pytest.approx(5)  # default_max_error
+    assert sorted(pkg.constraints["potc"]) == ["cpd00020_c0", "cpd00027_c0"]
+    assert m.slim_optimize() == pytest.approx(20)

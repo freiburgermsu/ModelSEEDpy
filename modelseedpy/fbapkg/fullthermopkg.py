@@ -144,6 +144,8 @@ class FullThermoPkg(BaseFBAPkg):
         if self.parameters["infeasible_model"]:
             simple_thermo_parameters["dgbin"] = True
         self.pkgmgr.getpkg("SimpleThermoPkg").build_package(simple_thermo_parameters)
+        # database_error() sets this when the database cannot be loaded; each build tries again
+        self._database_unavailable = False
 
         self.parameters[
             "combined_custom_concentrations"
@@ -358,15 +360,32 @@ class FullThermoPkg(BaseFBAPkg):
         self.build_variable("ndgerr", 0, ub, "continuous", object)
 
     def database_error(self, msid):
-        """The error the database reports for a compound's formation energy."""
-        if msid is None:
+        """The error the database reports for a compound's formation energy.
+
+        The database only widens the default error bound here, and the energies may all
+        come from notes['deltag'], so a database that cannot be read is not fatal: the
+        first failure logs one warning, and this returns None (the default bound) for
+        every compound until the next build_package tries again."""
+        if msid is None or getattr(self, "_database_unavailable", False):
             return None
         from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
 
-        if self.parameters["modelseed_db_path"] is not None:
-            biochem_db = ModelSEEDBiochem.get(path=self.parameters["modelseed_db_path"])
-        else:
-            biochem_db = ModelSEEDBiochem.get()
+        try:
+            if self.parameters["modelseed_db_path"] is not None:
+                biochem_db = ModelSEEDBiochem.get(
+                    path=self.parameters["modelseed_db_path"]
+                )
+            else:
+                biochem_db = ModelSEEDBiochem.get()
+        except OSError as ex:
+            self._database_unavailable = True
+            logger.warning(
+                f"FullThermoPkg: cannot load the ModelSEED database ({ex}); the error "
+                f"bounds use default_max_error ({self.parameters['default_max_error']} "
+                f"kJ/mol) without the database's own estimates. Set "
+                f"use_database_error=False to skip the database."
+            )
+            return None
         if msid not in biochem_db.compounds:
             return None
         error = getattr(biochem_db.compounds.get_by_id(msid), "delta_g_error", None)
