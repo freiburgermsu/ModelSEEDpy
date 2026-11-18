@@ -59,6 +59,7 @@ class ModelSEEDCompound2(Metabolite):
         self.flags = set()
         if flags:
             self.flags |= set(flags)
+        self.pathways = pathways or []
 
     def to_template_compartment_compound(self, compartment):
         cpd_id = f"{self.seed_id}"

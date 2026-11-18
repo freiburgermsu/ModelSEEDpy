@@ -54,7 +54,8 @@ setup(
         "openpyxl",
         "multiprocess",
         "h5py",
-        "graphviz" "Jinja2 >= 3.1.4",
+        "graphviz",
+        "Jinja2 >= 3.1.4",
         "sympy >=1.12.0",
     ],
     tests_require=[

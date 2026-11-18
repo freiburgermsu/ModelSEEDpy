@@ -88,14 +88,10 @@ def bioFlux_check(model, sol=None, sol_dict=None, min_growth=0.1):
 
 
 def minimizeFlux_withGrowth(model_util, min_growth, obj):
-    ic(model_util.model.id, "growth", model_util.model.slim_optimize())
+    # ic(model_util.model.id, "growth", model_util.model.slim_optimize())
     model_util.add_minimal_objective_cons(min_growth, name="min_growth")
     model_util.add_objective(obj, "min")
     sol = model_util.model.optimize()
-    # exchange = "EX_cpd00082_e0"
-    # for var in model_util.model.variables:
-    #     if exchange in var.name:
-    #         print(var.name, var.primal)
     sol_dict = bioFlux_check(model_util.model, sol, None, min_growth)
     return sol, sol_dict
 
@@ -109,6 +105,7 @@ class MSMinimalMedia:
         )
         for rxn in exchanges:
             # TODO: double-check the sign of the exchange variables
+            # prevent miniscule exchanges
             exVar = model_util.model.problem.Variable(
                 f"{rxn.id}_bin", lb=0, ub=1, type="binary"
             )
@@ -137,7 +134,7 @@ class MSMinimalMedia:
 
     @staticmethod
     def minimize_flux(
-        org_model,
+        org_model=None,
         min_growth=None,
         environment=None,
         interacting=True,
@@ -147,8 +144,11 @@ class MSMinimalMedia:
         printing=True,
         minExchange=None,
         errorOut=True,
+        model_util=None,
     ):
         """minimize the total in-flux of exchange reactions in the model"""
+        # A util passed in stands for its model, which is copied like any other.
+        org_model = org_model if org_model is not None else model_util.model
         # Wrap a copy WITHOUT passing the environment through MSModelUtil.__init__:
         # __init__ applies the environment to the ORIGINAL model before copying, so
         # the caller's model was left carrying this call's medium — in a media

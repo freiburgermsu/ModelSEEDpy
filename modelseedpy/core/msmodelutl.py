@@ -421,6 +421,21 @@ class MSModelUtil:
 
         # add constraints
         # print("ModelUtil", model, copy, climit, o2limit)
+        # Resolve and stash the limits so add_medium() can re-enforce them:
+        # setting `model.medium = ...` overrides the EX_cpd00007_e0 lower bound
+        # with whatever is in the medium dict (often -1000), silently undoing
+        # the o2limit applied here. add_medium re-clamps it on every call.
+        self.o2limit = None
+        self.climit = None
+        if FBAHelper.isnumber(climit) or FBAHelper.isnumber(o2limit):
+            if not FBAHelper.isnumber(climit) and FBAHelper.isnumber(o2limit):
+                climit = 3 * o2limit
+            elif not FBAHelper.isnumber(climit):
+                climit = 60
+            if not FBAHelper.isnumber(o2limit):
+                o2limit = climit / 3
+            self.climit = climit
+            self.o2limit = o2limit
         if "C_elements" in self.model.constraints:
             return
         if o2limit is False and climit is False:
@@ -430,12 +445,6 @@ class MSModelUtil:
                 f"Neither carbon consumption nor oxygen consumption are defined in {self.id}"
             )
         else:
-            if not FBAHelper.isnumber(climit) and FBAHelper.isnumber(o2limit):
-                climit = 3 * o2limit
-            elif not FBAHelper.isnumber(climit):
-                climit = 60
-            if not FBAHelper.isnumber(o2limit):
-                o2limit = climit / 3
             self.pkgmgr.getpkg("ElementUptakePkg").build_package({"C": climit})
             if "EX_cpd00007_e0" in [rxn.id for rxn in self.exchange_list()]:
                 self.model.reactions.get_by_id("EX_cpd00007_e0").lower_bound = -o2limit
@@ -2654,4 +2663,10 @@ class MSModelUtil:
                     [uniform_uptake] * len(self.model.medium),
                 )
             )
+        # Re-enforce o2limit if it was set on this util: `model.medium = ...`
+        # above raises the O2 cap to whatever the medium dict says (often 1000),
+        # so without this the limit set in __init__ is ignored. The o2limit takes
+        # precedence over the medium.
+        if getattr(self, "o2limit", None) is not None and "EX_cpd00007_e0" in exIDs:
+            self.model.reactions.get_by_id("EX_cpd00007_e0").lower_bound = -self.o2limit
         return self.model.medium
