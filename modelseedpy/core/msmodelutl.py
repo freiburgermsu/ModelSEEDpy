@@ -1885,11 +1885,15 @@ class MSModelUtil:
                 )
         self.score = value
         if model.solver.status != "optimal":
-            self.printlp(condition["media"].id + "-Testing-Infeasible.lp")
-            logger.critical(
-                condition["media"].id
-                + "testing leads to infeasible problem. LP file printed to debug!"
-            )
+            message = condition["media"].id + " testing leads to infeasible problem."
+            # Dump the tested model's LP only when debugging: writing a file into
+            # the working directory on every infeasible condition fails in a
+            # read-only directory and litters ATP correction and gapfilling runs.
+            if logger.isEnabledFor(logging.DEBUG):
+                lpfilename = condition["media"].id + "-Testing-Infeasible.lp"
+                self.printlp(model=model, lpfilename=lpfilename)
+                message += " LP file printed to " + lpfilename
+            logger.critical(message)
             return False
         if value >= condition["threshold"] and condition["is_max_threshold"]:
             logger.debug(
