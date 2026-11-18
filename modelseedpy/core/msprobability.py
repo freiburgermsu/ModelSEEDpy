@@ -2,7 +2,8 @@
 from cobrakbase.core.kbasefba.fbamodel_from_cobra import CobraModelConverter
 
 # from modelseedpy.fbapkg.mspackagemanager import MSPackageManager
-from mscommunity import MSCommunity
+# MSCommunity (an optional package, not in install_requires) is imported only by
+# prFBA's community path, so that this module imports without it
 from cobrakbase.core.kbasefba.fbamodel import FBAModel
 from cobra.io import write_sbml_model, read_sbml_model
 from collections import Counter
@@ -175,25 +176,28 @@ class MSProbability:
             )
             if missingRxns != set():
                 print("\nmissing reactions: ", missingRxns)
-            export_name = path.join(
-                reaction_counts_path, f"{clade}.xml"
-            )  # if re.search(f"[0-9]+\/[0-9]+\/[0-9]+", model_path) else f"{path.join(path.dirname(model_path), clade)}.xml"
+            # beside the supplied counts, or in the working directory when the counts were
+            # computed here (reaction_counts_path is then None)
+            export_name = (
+                path.join(reaction_counts_path, f"{clade}.xml")
+                if reaction_counts_path
+                else f"{clade}.xml"
+            )
             write_sbml_model(megaModel, export_name)
             megaModels.append(megaModel)
             print("\tfinished")
         return megaModels if len(clades_paths) > 1 else megaModels[0]
 
     @staticmethod
-    def megaModel_parallel():
-        from multiprocess import Pool
-
-        pool = Pool(24)
-        args = [
-            (asv, [model_gcf_mapping[k] for k in set(set(gcfs) - broken_models)])
-            for asv, gcfs in unique_asv_mappings.items()
-        ]
-        print(args[0])
-        pool.map(rxnFreq, args)
+    def megaModel_parallel(*args, **kwargs):
+        # The draft mapped an undefined rxnFreq over (ASV, model paths) pairs built from
+        # model_gcf_mapping and unique_asv_mappings, project data that the package never
+        # loads, and from megaModel's local broken_models, so it raised NameError.
+        raise NotImplementedError(
+            "MSProbability.megaModel_parallel is unfinished: its worker (rxnFreq) and its "
+            "inputs (model_gcf_mapping, unique_asv_mappings) are not defined in "
+            "ModelSEEDpy. Call MSProbability.megaModel(clades_paths) instead."
+        )
 
     @staticmethod
     def apply_threshold(model, threshold=0.5):
@@ -250,7 +254,8 @@ class MSProbability:
             objective are set on it, so pass ``model.copy()`` to keep the original. A second
             call on the same object raises PackageError (ElementUptakePkg is already
             registered). Two or more models are merged with
-            mscommunity.commhelper.build_from_species_models.
+            mscommunity.commhelper.build_from_species_models; only this path needs the
+            MSCommunity package.
         environment : dict, MSMedia or None
             None (default) keeps the model's own exchange bounds. A dict goes through
             MSModelUtil.add_medium: keys are compound ids (mapped to ``EX_<id>_e0``) or,
@@ -288,9 +293,6 @@ class MSProbability:
         -------
         cobra.Solution of the weighted minimization.
         """
-        # community modeling lives in the standalone MSCommunity package
-        from mscommunity.commhelper import build_from_species_models
-        from mscommunity.mscommsim import MSCommunity
         from modelseedpy.core.msmodelutl import MSModelUtil
         from modelseedpy.fbapkg.elementuptakepkg import ElementUptakePkg
         from optlang.symbolics import Zero
@@ -302,13 +304,18 @@ class MSProbability:
             model_s_ = [model_s_]
         if len(model_s_) == 0:
             raise ValueError("prFBA needs at least one model.")
-        mdlUtil = MSModelUtil(
-            model_s_[0]
-            if len(model_s_) == 1
-            else build_from_species_models(
-                model_s_, abundances=abundances, commkinetics=commkinetics
+        if len(model_s_) == 1:
+            mdlUtil = MSModelUtil(model_s_[0])
+        else:
+            # community modeling lives in the standalone MSCommunity package, which only
+            # this path needs
+            from mscommunity.commhelper import build_from_species_models
+
+            mdlUtil = MSModelUtil(
+                build_from_species_models(
+                    model_s_, abundances=abundances, commkinetics=commkinetics
+                )
             )
-        )
         # every rxn reaction needs a probability; check before the model is changed
         missing = [
             rxn.id
@@ -331,6 +338,8 @@ class MSProbability:
         elepkg.build_package({"C": 100})
         ## the total flux through the members proportional to their relative abundances
         if not commkinetics and len(model_s_) > 1:
+            from mscommunity.mscommsim import MSCommunity
+
             # the MSCommunity constructor installs the community kinetic rows
             MSCommObj = MSCommunity(
                 mdlUtil.model, model_s_, kinetic_coeff=kinetics_coef
