@@ -11,12 +11,10 @@ from math import isclose, inf, factorial
 from deepdiff import DeepDiff
 from time import process_time
 from pprint import pprint
-from icecream import ic
 import logging
 import json, re
 
 logger = logging.getLogger(__name__)
-ic.configureOutput(includeContext=True)
 M = 1000
 
 
