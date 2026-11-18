@@ -1084,16 +1084,26 @@ class MSModelUtil:
             self.model.computed_attributes = self.attributes
 
     def add_ms_reaction(
-        self, rxn_dict, msdb_path=None, msdb_object=None, comp_trans=["c0", "e0"]
+        self,
+        rxn_dict,
+        msdb_path=None,
+        msdb_object=None,
+        comp_trans=["c0", "e0"],
+        compartment_trans=None,
     ):
+        # compartment_trans is the original keyword; comp_trans is its alias
+        if compartment_trans is not None:
+            comp_trans = compartment_trans
         if msdb_object:
             modelseed = msdb_object
-        else:
-            # from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+        elif msdb_path:
             from modelseedpy.biochem import from_local
 
-            # modelseed = ModelSEEDBiochem.get()
             modelseed = from_local(msdb_path)
+        else:
+            from modelseedpy.biochem.modelseed_biochem import ModelSEEDBiochem
+
+            modelseed = ModelSEEDBiochem.get()
         output = []
         model_mets = self.metabolites_set(ids=True)
         for rxnid, comp in rxn_dict.items():
@@ -1106,10 +1116,13 @@ class MSModelUtil:
                 if comp_num > len(comp_trans):
                     logger.critical(f"The compartment index {comp_num} is out of range")
                 comp_str = comp_trans[comp_num]
-                met_output = self.find_met(met.id, comp_str)
+                # database metabolites carry the compartment index (cpd00001_0);
+                # model metabolites are named from the bare compound id
+                cpd_id = getattr(met, "base_id", None) or met.id.rsplit("_", 1)[0]
+                met_output = self.find_met(cpd_id, comp_str)
                 new_met = (
                     Metabolite(
-                        f"{met.id}_{comp_str}",
+                        f"{cpd_id}_{comp_str}",
                         name=f"{met.name}_{comp_str}",
                         compartment=comp_str,
                     )
