@@ -258,46 +258,43 @@ def convert_to_int(element):
     return element
 
 
-categories_dir = os.path.join(package_dir, "data", "categories")
-sugars, aminoacids = load(os.path.join(categories_dir, "sugars.npy")), load(
-    os.path.join(categories_dir, "aminoAcids.npy")
-)
-vitamins, minerals = load(os.path.join(categories_dir, "vitamins.npy")), load(
-    os.path.join(categories_dir, "minerals.npy")
-)
-energy_compounds = load(os.path.join(categories_dir, "energy_compounds.npy"))
-sugars_dic, aminoacids_dic = dict(zip(sugars[:, 0], sugars[:, 1])), dict(
-    zip(aminoacids[:, 0], aminoacids[:, 1])
-)
-vitamins_dic, minerals_dic = dict(zip(vitamins[:, 0], vitamins[:, 1])), dict(
-    zip(minerals[:, 0], minerals[:, 1])
-)
-energy_compounds_dic = dict(zip(energy_compounds[:, 0], energy_compounds[:, 1]))
+_CATEGORY_FILES = ("sugars", "aminoAcids", "vitamins", "minerals", "energy_compounds")
+_category_names = None
+
+
+def _load_category_names():
+    """{category: {compound id: name}} from data/categories/*.npy, read on first
+    use rather than at import: energy_compounds.npy alone is about 60 MB, and
+    every `import modelseedpy` used to load it."""
+    global _category_names
+    if _category_names is None:
+        categories_dir = os.path.join(package_dir, "data", "categories")
+        _category_names = {}
+        for category in _CATEGORY_FILES:
+            table = load(os.path.join(categories_dir, f"{category}.npy"))
+            _category_names[category] = dict(zip(table[:, 0], table[:, 1]))
+    return _category_names
 
 
 def categorize_mets(metIDs):
-    met_sugars, met_aminoAcids, met_vitamins, met_minerals, met_energy, met_other = (
-        [],
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
+    names = _load_category_names()
+    categorized = {category: [] for category in _CATEGORY_FILES}
+    met_other = []
     for metID in metIDs:
-        if metID in sugars[:, 0]:
-            met_sugars.append(f"{sugars_dic[metID]} ({metID})")
-        elif metID in aminoacids[:, 0]:
-            met_aminoAcids.append(f"{aminoacids_dic[metID]} ({metID})")
-        elif metID in vitamins[:, 0]:
-            met_vitamins.append(f"{vitamins_dic[metID]} ({metID})")
-        elif metID in minerals[:, 0]:
-            met_minerals.append(f"{minerals_dic[metID]} ({metID})")
-        elif metID in energy_compounds[:, 0]:
-            met_energy.append(f"{energy_compounds_dic[metID]} ({metID})")
+        for category in _CATEGORY_FILES:
+            if metID in names[category]:
+                categorized[category].append(f"{names[category][metID]} ({metID})")
+                break
         else:
             met_other.append(metID)
-    return met_sugars, met_aminoAcids, met_vitamins, met_minerals, met_energy, met_other
+    return (
+        categorized["sugars"],
+        categorized["aminoAcids"],
+        categorized["vitamins"],
+        categorized["minerals"],
+        categorized["energy_compounds"],
+        met_other,
+    )
 
 
 def process_mets(metIDs):
