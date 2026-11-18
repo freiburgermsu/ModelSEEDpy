@@ -667,7 +667,9 @@ class GapfillingPkg(BaseFBAPkg):
             self.model.objective = self.model.problem.Objective(Zero, direction="min")
             self.model.objective.set_linear_coefficients(objcoef)
             self.model.optimize()
-            new_solution = self.compute_gapfilled_solution(flux_values)
+            # read the minimised solution from the variables: flux_values holds
+            # the fluxes from before this optimize()
+            new_solution = self.compute_gapfilled_solution()
         return new_solution
 
     def knockout_gf_reactions_outside_solution(self, solution=None, flux_values=None):
