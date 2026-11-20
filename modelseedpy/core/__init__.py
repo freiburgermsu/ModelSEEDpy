@@ -22,3 +22,10 @@ from modelseedpy.core.msminimalmedia import (
 from modelseedpy.core.mstemplate import MSTemplateBuilder
 from modelseedpy.core.msmodelreport import MSModelReport
 from modelseedpy.core.annotationontology import AnnotationOntology
+from modelseedpy.core.msenergyaudit import (
+    energy_from_nothing,
+    electrons_from_nothing,
+    net_atp_yield,
+    find_energy_cycle,
+    conformal_cycle,
+)
